@@ -1,0 +1,85 @@
+<table xmlns:th="http://www.thymeleaf.org">
+<tbody th:fragment="rows">
+    <tr th:each="a : ${audits}"
+        th:classappend="${a.status == 'RECOVERED'} ? 'border-l-emerald-500' : (${a.status == 'IN_PROGRESS'} ? 'border-l-amber-500' : (${a.status == 'ABORTED'} ? 'border-l-rose-500' : 'border-l-slate-600'))"
+        class="border-l-[3px] border-b border-b-[#1B2230] hover:bg-white/[0.02] transition-colors">
+
+        <!-- Txn ID -->
+        <td class="px-4 py-3 font-mono text-[12px] text-slate-400 whitespace-nowrap">
+            <span th:text="${a.transactionId}">pay_abc123</span>
+        </td>
+
+        <!-- Customer -->
+        <td class="px-4 py-3 whitespace-nowrap">
+            <div class="text-sm text-slate-200" th:text="${a.customerName}">Priya Sharma</div>
+            <div class="font-mono text-[11px] text-slate-500" th:text="${a.customerPhone}">+919876543210</div>
+        </td>
+
+        <!-- Amount -->
+        <td class="px-4 py-3 whitespace-nowrap">
+            <span class="font-mono text-sm text-slate-100"
+                  th:text="'₹' + ${#numbers.formatDecimal(a.amount, 1, 'COMMA', 2, 'POINT')}">₹1,499.00</span>
+        </td>
+
+        <!-- Failure Code -->
+        <td class="px-4 py-3 whitespace-nowrap">
+            <span class="inline-flex items-center rounded-md bg-slate-700/40 px-2 py-1 font-mono text-[11px] text-slate-300"
+                  th:text="${a.errorCode}">GATEWAY_TIMEOUT</span>
+        </td>
+
+        <!-- AI Action & Strategy -->
+        <td class="px-4 py-3 max-w-[280px]">
+            <div class="text-sm font-medium text-amber-300" th:text="${a.actionTaken}">HINGLISH_VOICE_OUTREACH</div>
+            <div class="mt-0.5 text-[11px] leading-snug text-slate-500 line-clamp-2"
+                 th:text="${a.decisionTrace}">User friction on high-value txn; voice outreach maximizes recovery.</div>
+        </td>
+
+        <!-- Intervention Cost -->
+        <td class="px-4 py-3 whitespace-nowrap">
+            <span class="font-mono text-sm text-slate-300"
+                  th:text="'₹' + ${#numbers.formatDecimal(a.interventionCost, 1, 'COMMA', 2, 'POINT')}">₹1.20</span>
+        </td>
+
+        <!-- Payment Link -->
+        <td class="px-4 py-3 whitespace-nowrap">
+            <a th:if="${a.paymentLinkUrl != null and !a.paymentLinkUrl.isEmpty()}"
+               th:href="${a.paymentLinkUrl}" target="_blank" rel="noopener"
+               class="font-mono text-[12px] text-sky-400 hover:text-sky-300 hover:underline">
+                rzp.io/i/<span th:text="${#strings.abbreviate(a.transactionId, 8)}">recover</span>
+            </a>
+            <span th:unless="${a.paymentLinkUrl != null and !a.paymentLinkUrl.isEmpty()}"
+                  class="text-[12px] text-slate-600">—</span>
+        </td>
+
+        <!-- Status Badge -->
+        <td class="px-4 py-3 whitespace-nowrap">
+            <span th:if="${a.status == 'RECOVERED'}"
+                  class="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-400 ring-1 ring-inset ring-emerald-500/30">
+                <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                RECOVERED
+            </span>
+            <span th:if="${a.status == 'IN_PROGRESS'}"
+                  class="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-400 ring-1 ring-inset ring-amber-500/30">
+                <span class="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                IN PROGRESS
+            </span>
+            <span th:if="${a.status == 'ABORTED'}"
+                  class="inline-flex items-center gap-1.5 rounded-full bg-rose-500/10 px-2.5 py-1 text-[11px] font-semibold text-rose-400 ring-1 ring-inset ring-rose-500/30">
+                <span class="h-1.5 w-1.5 rounded-full bg-rose-400"></span>
+                ABORTED
+            </span>
+            <span th:if="${a.status != 'RECOVERED' and a.status != 'IN_PROGRESS' and a.status != 'ABORTED'}"
+                  class="inline-flex items-center gap-1.5 rounded-full bg-slate-500/10 px-2.5 py-1 text-[11px] font-semibold text-slate-400 ring-1 ring-inset ring-slate-500/30">
+                <span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>
+                <span th:text="${a.status}">PENDING</span>
+            </span>
+        </td>
+    </tr>
+
+    <tr th:if="${audits == null or audits.isEmpty()}">
+        <td colspan="8" class="px-4 py-10 text-center text-sm text-slate-600">
+            No recovery attempts logged yet. Trigger a batch benchmark to populate the ledger.
+        </td>
+    </tr>
+</tbody>
+</table>
