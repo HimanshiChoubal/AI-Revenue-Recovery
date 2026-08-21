@@ -1,127 +1,130 @@
-"""
-ReCover-AI :: Recovery Risk Model Trainer
-
-Trains a scikit-learn LogisticRegression model that predicts the
-probability a failed transaction will be successfully recovered, given
-its amount, error code, and attempt count. This replaces the earlier
-pure if/else policy with a real, trained model whose output
-(`recovery_probability`) now feeds into the decision engine in app.py.
-
-Historical labelled outcomes aren't available yet in this hackathon
-build, so training data is synthesized from realistic priors (soft
-technical failures recover far more often than hard card blocks; high
-attempt counts and low amounts recover less often; etc). Swap
-`generate_training_data()` for a real query against RecoveryAudit once
-enough production outcomes exist.
-
-Run:
-    python train_risk_model.py
-Produces:
-    risk_model.joblib
-"""
-
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, roc_auc_score
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.compose import ColumnTransformer
+import json
 import joblib
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
 
-RANDOM_SEED = 42
+def generate_realistic_data(n_samples=60000):
+    np.random.seed(42)
+    
+    # 1. Base transaction features
+    amounts = np.random.lognormal(mean=7.5, sigma=0.85, size=n_samples)
+    amounts = np.clip(amounts, 200, 45000)
+    
+    account_age = np.random.exponential(scale=240, size=n_samples) + 1
+    past_return_rate = np.random.beta(a=1.5, b=8, size=n_samples)
+    days_since_delivery = np.random.poisson(lam=4.5, size=n_samples) + 1
+    discount_pct = np.random.choice([0, 10, 20, 30, 50], size=n_samples, p=[0.45, 0.25, 0.15, 0.1, 0.05])
 
-ERROR_CODES = [
-    "GATEWAY_TIMEOUT",
-    "BAD_REQUEST_PAYMENT_TIMED_OUT",
-    "INSUFFICIENT_FUNDS",
-    "OTP_FAILED",
-    "AUTHENTICATION_FAILED",
-    "MANDATE_EXPIRED",
-    "CARD_BLOCKED",
-    "STOLEN_CARD",
-    "ACCOUNT_CLOSED",
-]
-
-# Base recovery-probability priors per error code, before amount/attempt
-# adjustments are applied. These encode the same domain intuition as the
-# original rule-based engine (soft failures recover easily, hard blocks
-# almost never do) but as continuous probabilities a model can learn from
-# and generalize, rather than a hardcoded branch.
-BASE_RECOVERY_RATE = {
-    "GATEWAY_TIMEOUT": 0.93,
-    "BAD_REQUEST_PAYMENT_TIMED_OUT": 0.90,
-    "INSUFFICIENT_FUNDS": 0.55,
-    "OTP_FAILED": 0.62,
-    "AUTHENTICATION_FAILED": 0.58,
-    "MANDATE_EXPIRED": 0.68,
-    "CARD_BLOCKED": 0.04,
-    "STOLEN_CARD": 0.01,
-    "ACCOUNT_CLOSED": 0.02,
-}
-
-
-def generate_training_data(n_samples: int = 20000, seed: int = RANDOM_SEED) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
-
-    error_codes = rng.choice(ERROR_CODES, size=n_samples)
-    amounts = rng.gamma(shape=2.0, scale=1800, size=n_samples).clip(50, 80000)
-    attempts = rng.choice([0, 1, 2, 3], size=n_samples, p=[0.55, 0.25, 0.12, 0.08])
-
-    probabilities = np.array([BASE_RECOVERY_RATE[code] for code in error_codes])
-
-    # Higher amounts are modestly harder to recover (more customer hesitation).
-    amount_penalty = np.clip((amounts - 1500) / 100000, 0, 0.15)
-    # Each prior failed attempt erodes recovery probability.
-    attempt_penalty = attempts * 0.12
-
-    final_probabilities = np.clip(probabilities - amount_penalty - attempt_penalty, 0.01, 0.99)
-    outcomes = rng.binomial(1, final_probabilities)
-
-    return pd.DataFrame({
-        "amount": amounts,
-        "error_code": error_codes,
-        "attempts_so_far": attempts,
-        "recovered": outcomes,
-    })
-
-
-def build_pipeline() -> Pipeline:
-    preprocessor = ColumnTransformer(transformers=[
-        ("amount_scaled", StandardScaler(), ["amount", "attempts_so_far"]),
-        ("error_code_ohe", OneHotEncoder(handle_unknown="ignore"), ["error_code"]),
-    ])
-    return Pipeline(steps=[
-        ("preprocess", preprocessor),
-        ("classifier", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED)),
-    ])
-
-
-def main():
-    df = generate_training_data()
-    X = df[["amount", "error_code", "attempts_so_far"]]
-    y = df["recovered"]
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=RANDOM_SEED, stratify=y
+    # 2. Risk separation logic with interaction signals
+    # Abuse correlates with high return history + high value + late return request + new account
+    z = (
+        -5.2
+        + (past_return_rate * 6.5)
+        + (np.log(amounts) * 0.45)
+        + (days_since_delivery * 0.18)
+        - (np.log(account_age) * 0.40)
+        + ((past_return_rate * (days_since_delivery > 7)) * 2.2)
     )
+    probs = 1 / (1 + np.exp(-z))
+    is_abusive = np.random.binomial(1, probs)
 
-    pipeline = build_pipeline()
-    pipeline.fit(X_train, y_train)
+    df = pd.DataFrame({
+        'order_amount': amounts,
+        'account_age_days': account_age.astype(int),
+        'past_return_rate': past_return_rate,
+        'days_since_delivery': days_since_delivery,
+        'discount_pct': discount_pct,
+        'is_abusive': is_abusive
+    })
+    return df
 
-    y_pred = pipeline.predict(X_test)
-    y_proba = pipeline.predict_proba(X_test)[:, 1]
+def train_and_evaluate():
+    df = generate_realistic_data()
+    X = df.drop(columns=['is_abusive'])
+    y = df['is_abusive']
 
-    accuracy = accuracy_score(y_test, y_pred)
-    auc = roc_auc_score(y_test, y_proba)
+    # Strict split: 60% Train, 20% Val, 20% Held-Out Test
+    X_train_val, X_test, y_train_val, y_test = train_test_split(X, y, test_size=0.20, random_state=42, stratify=y)
+    X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=0.25, random_state=42, stratify=y_train_val)
 
-    print(f"Validation accuracy: {accuracy:.4f}")
-    print(f"Validation ROC-AUC:  {auc:.4f}")
+    # Train calibrated boosting model
+    base_clf = HistGradientBoostingClassifier(
+        random_state=42, 
+        max_iter=120, 
+        learning_rate=0.08, 
+        min_samples_leaf=25,
+        l2_regularization=1.5
+    )
+    model = CalibratedClassifierCV(base_clf, method='isotonic', cv=5)
+    model.fit(X_train, y_train)
 
-    joblib.dump(pipeline, "risk_model.joblib")
-    print("Saved trained model to risk_model.joblib")
+    # Find optimal cost threshold on VALIDATION set
+    val_probs = model.predict_proba(X_val)[:, 1]
+    FP_COST = 500.0  # ₹500 customer friction / review cost
+    
+    thresholds = [0.35, 0.50, 0.65, 0.75]
+    threshold_tradeoffs = []
+    best_thresh, min_loss = 0.5, float('inf')
 
+    for t in np.linspace(0.2, 0.85, 66):
+        preds = (val_probs >= t).astype(int)
+        fp = ((preds == 1) & (y_val == 0)).sum()
+        fn_loss = X_val.loc[(preds == 0) & (y_val == 1), 'order_amount'].sum()
+        total_loss = (fp * FP_COST) + fn_loss
+        
+        if total_loss < min_loss:
+            min_loss = total_loss
+            best_thresh = t
 
-if __name__ == "__main__":
-    main()
+    for t in thresholds:
+        preds = (val_probs >= t).astype(int)
+        threshold_tradeoffs.append({
+            "threshold": float(t),
+            "precision": float(precision_score(y_val, preds, zero_division=0)),
+            "recall": float(recall_score(y_val, preds)),
+            "f1": float(f1_score(y_val, preds))
+        })
+
+    # Run on UNTOUCHED Held-Out Test Set
+    test_probs = model.predict_proba(X_test)[:, 1]
+    test_preds = (test_probs >= best_thresh).astype(int)
+
+    precision = float(precision_score(y_test, test_preds, zero_division=0))
+    recall = float(recall_score(y_test, test_preds))
+    f1 = float(f1_score(y_test, test_preds))
+    auc = float(roc_auc_score(y_test, test_probs))
+    tn, fp, fn, tp = confusion_matrix(y_test, test_preds).ravel()
+
+    fp_cost_total = float(fp * FP_COST)
+    tp_saved_total = float(X_test.loc[(test_preds == 1) & (y_test == 1), 'order_amount'].sum())
+    fn_loss_total = float(X_test.loc[(test_preds == 0) & (y_test == 1), 'order_amount'].sum())
+    net_benefit = tp_saved_total - fp_cost_total - fn_loss_total
+
+    metrics_payload = {
+        "precision": precision,
+        "recall": recall,
+        "f1_score": f1,
+        "roc_auc": auc,
+        "operating_threshold": float(round(best_thresh, 3)),
+        "confusion_matrix": {"TP": int(tp), "FP": int(fp), "TN": int(tn), "FN": int(fn)},
+        "financial_impact": {
+            "gross_abuse_blocked_inr": tp_saved_total,
+            "false_positive_ops_cost_inr": fp_cost_total,
+            "false_negative_leakage_inr": fn_loss_total,
+            "net_economic_benefit_inr": net_benefit
+        },
+        "threshold_tradeoffs": threshold_tradeoffs
+    }
+
+    joblib.dump({'model': model, 'threshold': best_thresh}, 'risk_model.joblib')
+    with open('model_metrics.json', 'w') as f:
+        json.dump(metrics_payload, f, indent=2)
+
+    print(f"Model trained successfully. Held-out Precision: {precision*100:.2f}%, Recall: {recall*100:.2f}%, AUC: {auc:.4f}")
+
+if __name__ == '__main__':
+    train_and_evaluate()

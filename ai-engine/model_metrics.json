@@ -1,0 +1,18 @@
+{
+  "precision": 0.25603087809585073,
+  "recall": 0.6347687400318979,
+  "f1_score": 0.3648865459546184,
+  "roc_auc": 0.7622972142015435,
+  "confusion_matrix": {
+    "TP": 796,
+    "FP": 2313,
+    "TN": 6433,
+    "FN": 458
+  },
+  "business_impact": {
+    "false_positive_cost_inr": 1156500.0,
+    "true_positive_saved_inr": 2067005.6289316318,
+    "net_savings_inr": 910505.6289316318
+  },
+  "operating_threshold": 0.1489795918367347
+}
