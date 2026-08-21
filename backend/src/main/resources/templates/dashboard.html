@@ -65,13 +65,13 @@
 
         <div class="flex flex-col items-start gap-2 sm:items-end">
             <button
-                type="button"
-                hx-post="/api/v1/failures/ingest-batch"
-                hx-target="#benchmark-status"
-                hx-swap="innerHTML"
-                hx-indicator="#benchmark-spinner"
-                hx-disabled-elt="this"
-                class="group inline-flex items-center gap-2 rounded-lg bg-gold px-4 py-2.5 font-display text-sm font-semibold text-[#1A1305] shadow-[0_0_0_1px_rgba(232,163,61,0.4)] transition hover:bg-gold/90 disabled:cursor-not-allowed disabled:opacity-60">
+                    type="button"
+                    hx-post="/api/v1/failures/ingest-batch"
+                    hx-target="#benchmark-status"
+                    hx-swap="innerHTML"
+                    hx-indicator="#benchmark-spinner"
+                    hx-disabled-elt="this"
+                    class="group inline-flex items-center gap-2 rounded-lg bg-gold px-4 py-2.5 font-display text-sm font-semibold text-[#1A1305] shadow-[0_0_0_1px_rgba(232,163,61,0.4)] transition hover:bg-gold/90 disabled:cursor-not-allowed disabled:opacity-60">
                 <svg id="benchmark-spinner" class="htmx-indicator h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
@@ -85,65 +85,14 @@
 
     <!-- ============ METRIC CARDS ============ -->
     <section
-        id="metrics-grid"
-        hx-get="/api/v1/dashboard/stats"
-        hx-trigger="load, every 3s"
-        hx-swap="innerHTML"
-        class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-
-        <!-- Value at Risk -->
-        <div class="rounded-xl border border-edge bg-surface p-5">
-            <div class="flex items-center justify-between">
-                <span class="text-xs font-medium uppercase tracking-wide text-slate-500">Value at Risk</span>
-                <span class="h-1.5 w-1.5 rounded-full bg-rose-400"></span>
-            </div>
-            <div class="mt-3 font-mono text-2xl font-semibold text-white"
-                 th:text="'₹' + ${#numbers.formatDecimal(stats?.totalAtRisk ?: 0, 1, 'COMMA', 2, 'POINT')}">
-                ₹0.00
-            </div>
-            <div class="mt-1 text-[11px] text-slate-600">Pending recovery attempts</div>
-        </div>
-
-        <!-- Gross Recovered -->
-        <div class="rounded-xl border border-edge bg-surface p-5">
-            <div class="flex items-center justify-between">
-                <span class="text-xs font-medium uppercase tracking-wide text-slate-500">Gross Recovered</span>
-                <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
-            </div>
-            <div class="mt-3 font-mono text-2xl font-semibold text-white"
-                 th:text="'₹' + ${#numbers.formatDecimal(stats?.totalRecovered ?: 0, 1, 'COMMA', 2, 'POINT')}">
-                ₹0.00
-            </div>
-            <div class="mt-1 text-[11px] text-slate-600">Successfully re-collected</div>
-        </div>
-
-        <!-- Net Recovery Rate -->
-        <div class="rounded-xl border border-edge bg-surface p-5">
-            <div class="flex items-center justify-between">
-                <span class="text-xs font-medium uppercase tracking-wide text-slate-500">Net Recovery Rate</span>
-                <span class="h-1.5 w-1.5 rounded-full bg-gold"></span>
-            </div>
-            <div class="mt-3 font-mono text-2xl font-semibold text-white"
-                 th:text="${#numbers.formatDecimal(stats?.recoveryRate ?: 0, 1, 2, 'POINT')} + '%'">
-                0.00%
-            </div>
-            <div class="mt-1 text-[11px] text-slate-600">Recovered ÷ total failures</div>
-        </div>
-
-        <!-- Intervention Cost -->
-        <div class="rounded-xl border border-edge bg-surface p-5">
-            <div class="flex items-center justify-between">
-                <span class="text-xs font-medium uppercase tracking-wide text-slate-500">Intervention Cost</span>
-                <span class="h-1.5 w-1.5 rounded-full bg-sky-400"></span>
-            </div>
-            <div class="mt-3 font-mono text-2xl font-semibold text-white"
-                 th:text="'₹' + ${#numbers.formatDecimal(stats?.totalCost ?: 0, 1, 'COMMA', 2, 'POINT')}">
-                ₹0.00
-            </div>
-            <div class="mt-1 text-[11px] text-slate-600">Spent across all outreach rails</div>
-        </div>
+            id="metrics-grid"
+            hx-get="/api/v1/dashboard/metrics"
+            hx-trigger="load, every 3s"
+            hx-swap="innerHTML"
+            class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+            th:insert="~{fragments/metrics_cards}">
+        <!-- initial server-rendered cards -->
     </section>
-
     <!-- ============ AUDIT LEDGER ============ -->
     <section class="mt-8">
         <div class="flex items-center justify-between">
@@ -158,24 +107,24 @@
             <div class="overflow-x-auto">
                 <table class="w-full border-collapse text-left">
                     <thead>
-                        <tr class="border-b border-edge bg-surface2 text-[11px] uppercase tracking-wide text-slate-500">
-                            <th class="px-4 py-3 font-medium">Txn ID</th>
-                            <th class="px-4 py-3 font-medium">Customer</th>
-                            <th class="px-4 py-3 font-medium">Amount</th>
-                            <th class="px-4 py-3 font-medium">Failure Code</th>
-                            <th class="px-4 py-3 font-medium">AI Action &amp; Strategy</th>
-                            <th class="px-4 py-3 font-medium">Intervention Cost</th>
-                            <th class="px-4 py-3 font-medium">Payment Link</th>
-                            <th class="px-4 py-3 font-medium">Status</th>
-                        </tr>
+                    <tr class="border-b border-edge bg-surface2 text-[11px] uppercase tracking-wide text-slate-500">
+                        <th class="px-4 py-3 font-medium">Txn ID</th>
+                        <th class="px-4 py-3 font-medium">Customer</th>
+                        <th class="px-4 py-3 font-medium">Amount</th>
+                        <th class="px-4 py-3 font-medium">Failure Code</th>
+                        <th class="px-4 py-3 font-medium">AI Action &amp; Strategy</th>
+                        <th class="px-4 py-3 font-medium">Intervention Cost</th>
+                        <th class="px-4 py-3 font-medium">Payment Link</th>
+                        <th class="px-4 py-3 font-medium">Status</th>
+                    </tr>
                     </thead>
                     <tbody
-                        id="audit-tbody"
-                        hx-get="/api/v1/dashboard/audit-rows"
-                        hx-trigger="load, every 2s"
-                        hx-swap="innerHTML"
-                        th:insert="~{fragments/audit_rows :: rows}">
-                    <!-- initial server-rendered rows; HTMX takes over polling from here -->
+                            id="audit-tbody"
+                            hx-get="/api/v1/dashboard/audit-rows"
+                            hx-trigger="load, every 2s"
+                            hx-swap="innerHTML"
+                            th:insert="~{fragments/audit_rows}">
+                    <!-- initial server-rendered rows -->
                     </tbody>
                 </table>
             </div>

@@ -3,3 +3,7 @@ uvicorn
 pydantic
 requests
 httpx
+scikit-learn
+pandas
+numpy
+joblib

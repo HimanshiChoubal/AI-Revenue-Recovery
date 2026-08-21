@@ -8,6 +8,7 @@ import com.razorpay.backend.service.RecoveryOrchestrationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -28,6 +29,7 @@ import java.util.List;
 public class RecoveryApiController {
 
     private static final Logger log = LoggerFactory.getLogger(RecoveryApiController.class);
+    private static final int DEFAULT_BENCHMARK_SIZE = 1000;
 
     private final RecoveryOrchestrationService orchestrationService;
     private final RecoveryAuditRepository auditRepository;
@@ -55,17 +57,49 @@ public class RecoveryApiController {
         }
     }
 
-    @PostMapping("/failures/ingest-batch")
+    /**
+     * Ingest and process a batch of failure events. If the request body is
+     * empty/null (as sent by the dashboard's "Trigger Batch Benchmark"
+     * button, which POSTs with no body), automatically generates and
+     * processes {@value #DEFAULT_BENCHMARK_SIZE} synthetic transactions
+     * instead of rejecting the request. Always returns an HTML snippet
+     * suitable for direct HTMX swap into #benchmark-status.
+     */
+    @PostMapping(value = "/failures/ingest-batch", produces = MediaType.TEXT_HTML_VALUE)
     @ResponseBody
-    public ResponseEntity<List<RecoveryAudit>> ingestBatch(@RequestBody List<PaymentFailureEventDto> events) {
-        if (events == null || events.isEmpty()) {
-            log.warn("Rejected batch ingest request: empty payload");
-            return ResponseEntity.badRequest().build();
-        }
+    public ResponseEntity<String> ingestBatch(
+            @RequestBody(required = false) List<PaymentFailureEventDto> events) {
 
-        log.info("Ingesting batch of {} failure events via virtual threads", events.size());
-        List<RecoveryAudit> results = orchestrationService.processBatch(events);
-        return ResponseEntity.status(HttpStatus.CREATED).body(results);
+        try {
+            List<RecoveryAudit> results;
+            int requestedSize;
+
+            if (events == null || events.isEmpty()) {
+                requestedSize = DEFAULT_BENCHMARK_SIZE;
+                log.info("Empty batch request received — generating {} synthetic transactions", requestedSize);
+                results = orchestrationService.processBatch(requestedSize);
+            } else {
+                requestedSize = events.size();
+                log.info("Ingesting batch of {} failure events via virtual threads", requestedSize);
+                results = orchestrationService.processBatch(events);
+            }
+
+            long recoveredCount = results.stream()
+                    .filter(r -> "RECOVERED".equals(r.getStatus()))
+                    .count();
+
+            String message = String.format(
+                    "<span class=\"text-emerald-400\">&#10003; Processed %d / %d transactions " +
+                            "&mdash; %d recovered</span>",
+                    results.size(), requestedSize, recoveredCount);
+
+            return ResponseEntity.status(HttpStatus.CREATED).body(message);
+        } catch (Exception e) {
+            log.error("Batch benchmark failed", e);
+            String message = "<span class=\"text-rose-400\">&#10007; Batch failed: "
+                    + escapeHtml(String.valueOf(e.getMessage())) + "</span>";
+            return ResponseEntity.internalServerError().body(message);
+        }
     }
 
     @GetMapping("/dashboard/stats")
@@ -74,10 +108,29 @@ public class RecoveryApiController {
         return ResponseEntity.ok(orchestrationService.getDashboardStats());
     }
 
+    /**
+     * Returns the metric cards as a rendered HTML fragment (not raw JSON)
+     * so HTMX can swap it directly into the dashboard's #metrics-grid
+     * container on every poll.
+     */
+    @GetMapping("/dashboard/metrics")
+    public String dashboardMetricsFragment(Model model) {
+        DashboardStatsDto stats = orchestrationService.getDashboardStats();
+        model.addAttribute("stats", stats);
+        return "fragments/metrics_cards :: cards";
+    }
+
     @GetMapping("/dashboard/audit-rows")
     public String auditRows(Model model) {
         List<RecoveryAudit> audits = auditRepository.findTop50ByOrderByCreatedAtDesc();
         model.addAttribute("audits", audits);
         return "fragments/audit_rows :: rows";
+    }
+
+    private static String escapeHtml(String value) {
+        return value.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
     }
 }
