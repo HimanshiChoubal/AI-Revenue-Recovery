@@ -1,39 +1,55 @@
 <div xmlns:th="http://www.thymeleaf.org" th:fragment="cards" class="contents">
 
-    <!-- Evaluated GMV -->
-    <div class="bg-[#10151D] border border-gray-800 p-5 rounded-xl">
-        <div class="flex items-center justify-between text-gray-400 text-xs uppercase font-medium">
-            <span>Evaluated GMV</span>
-            <span th:if="${stats?.aiEngineOnline}" class="text-emerald-400 text-[10px] font-mono">● ML Active</span>
-            <span th:unless="${stats?.aiEngineOnline}" class="text-amber-400 text-[10px] font-mono">▲ Fallback Active</span>
+    <!-- Value at Risk -->
+    <div class="rounded-xl border border-edge bg-surface p-5">
+        <div class="flex items-center justify-between">
+            <span class="text-xs font-medium uppercase tracking-wide text-slate-500">Value at Risk</span>
+            <span class="h-1.5 w-1.5 rounded-full bg-rose-400"></span>
         </div>
-        <div class="text-2xl text-white font-mono font-semibold mt-2"
-             th:text="'₹' + ${#numbers.formatDecimal(stats?.totalExposedGMV ?: 0, 1, 'COMMA', 2, 'POINT')}">₹0.00</div>
-        <div class="text-xs text-gray-500 mt-1" th:text="${stats?.totalEvents ?: 0} + ' total return events'">0 events</div>
+        <div class="mt-3 font-mono text-2xl font-semibold text-white"
+             th:text="'₹' + ${#numbers.formatDecimal(stats?.totalAtRisk ?: 0, 1, 'COMMA', 2, 'POINT')}">
+            ₹0.00
+        </div>
+        <div class="mt-1 text-[11px] text-slate-600">Pending recovery attempts</div>
     </div>
 
-    <!-- Abuse Blocked -->
-    <div class="bg-[#10151D] border border-gray-800 p-5 rounded-xl">
-        <div class="text-gray-400 text-xs uppercase font-medium">Abuse Blocked (Saved)</div>
-        <div class="text-2xl text-emerald-400 font-mono font-semibold mt-2"
-             th:text="'₹' + ${#numbers.formatDecimal(stats?.totalSavedGMV ?: 0, 1, 'COMMA', 2, 'POINT')}">₹0.00</div>
-        <div class="text-xs text-gray-500 mt-1">Intercepted for review</div>
+    <!-- Gross Recovered -->
+    <div class="rounded-xl border border-edge bg-surface p-5">
+        <div class="flex items-center justify-between">
+            <span class="text-xs font-medium uppercase tracking-wide text-slate-500">Gross Recovered</span>
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+        </div>
+        <div class="mt-3 font-mono text-2xl font-semibold text-white"
+             th:text="'₹' + ${#numbers.formatDecimal(stats?.totalRecovered ?: 0, 1, 'COMMA', 2, 'POINT')}">
+            ₹0.00
+        </div>
+        <div class="mt-1 text-[11px] text-slate-600">Successfully re-collected</div>
     </div>
 
-    <!-- FP Ops Cost -->
-    <div class="bg-[#10151D] border border-gray-800 p-5 rounded-xl">
-        <div class="text-gray-400 text-xs uppercase font-medium">False-Positive Ops Cost</div>
-        <div class="text-2xl text-rose-400 font-mono font-semibold mt-2"
-             th:text="'₹' + ${#numbers.formatDecimal(stats?.totalFalsePositiveCost ?: 0, 1, 'COMMA', 2, 'POINT')}">₹0.00</div>
-        <div class="text-xs text-gray-500 mt-1">Calculated at ₹500/review</div>
+    <!-- Net Recovery Rate -->
+    <div class="rounded-xl border border-edge bg-surface p-5">
+        <div class="flex items-center justify-between">
+            <span class="text-xs font-medium uppercase tracking-wide text-slate-500">Net Recovery Rate</span>
+            <span class="h-1.5 w-1.5 rounded-full bg-gold"></span>
+        </div>
+        <div class="mt-3 font-mono text-2xl font-semibold text-white"
+             th:text="${#numbers.formatDecimal(stats?.recoveryRate ?: 0, 1, 2, 'POINT')} + '%'">
+            0.00%
+        </div>
+        <div class="mt-1 text-[11px] text-slate-600">Recovered ÷ total failures</div>
     </div>
 
-    <!-- Held-Out Precision / Recall -->
-    <div class="bg-[#10151D] border border-gray-800 p-5 rounded-xl">
-        <div class="text-gray-400 text-xs uppercase font-medium">Held-Out Prec / Recall</div>
-        <div class="text-2xl text-blue-400 font-mono font-semibold mt-2"
-             th:text="${#numbers.formatDecimal(stats?.testPrecision ?: 0, 1, 1)} + '% / ' + ${#numbers.formatDecimal(stats?.testRecall ?: 0, 1, 1)} + '%'">0.0% / 0.0%</div>
-        <div class="text-xs text-gray-500 mt-1" th:text="'Opt Threshold: ' + ${#numbers.formatDecimal(stats?.operatingThreshold ?: 0.5, 1, 2)}">Threshold: 0.50</div>
+    <!-- Intervention Cost -->
+    <div class="rounded-xl border border-edge bg-surface p-5">
+        <div class="flex items-center justify-between">
+            <span class="text-xs font-medium uppercase tracking-wide text-slate-500">Intervention Cost</span>
+            <span class="h-1.5 w-1.5 rounded-full bg-sky-400"></span>
+        </div>
+        <div class="mt-3 font-mono text-2xl font-semibold text-white"
+             th:text="'₹' + ${#numbers.formatDecimal(stats?.totalCost ?: 0, 1, 'COMMA', 2, 'POINT')}">
+            ₹0.00
+        </div>
+        <div class="mt-1 text-[11px] text-slate-600">Spent across all outreach rails</div>
     </div>
 
 </div>
