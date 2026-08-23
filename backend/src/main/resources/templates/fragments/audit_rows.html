@@ -1,5 +1,4 @@
-<table xmlns:th="http://www.thymeleaf.org">
-    <tbody th:fragment="rows">
+<th:block xmlns:th="http://www.thymeleaf.org" th:fragment="rows">
     <tr th:each="a : ${audits}"
         th:classappend="${a.status == 'RECOVERED'} ? 'border-l-emerald-500' : (${a.status == 'IN_PROGRESS'} ? 'border-l-amber-500' : (${a.status == 'ABORTED'} ? 'border-l-rose-500' : 'border-l-slate-600'))"
         class="border-l-[3px] border-b border-b-[#1B2230] hover:bg-white/[0.02] transition-colors">
@@ -87,5 +86,4 @@
             No recovery attempts logged yet. Trigger a batch benchmark to populate the ledger.
         </td>
     </tr>
-    </tbody>
-</table>
+</th:block>

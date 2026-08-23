@@ -1,0 +1,45 @@
+{
+  "precision": 0.6761885934565582,
+  "recall": 0.9820556991099627,
+  "f1_score": 0.8009131885500205,
+  "roc_auc": 0.8665807507513366,
+  "operating_threshold": 0.2,
+  "confusion_matrix": {
+    "TP": 6841,
+    "FP": 3276,
+    "TN": 1758,
+    "FN": 125
+  },
+  "financial_impact": {
+    "gross_revenue_recovered_inr": 13759437.373025842,
+    "intervention_cost_total_inr": 3540.95,
+    "missed_revenue_fn_inr": 257600.74299678483,
+    "net_economic_benefit_inr": 13498295.680029059
+  },
+  "threshold_tradeoffs": [
+    {
+      "threshold": 0.35,
+      "precision": 0.7324854975457386,
+      "recall": 0.942713567839196,
+      "f1": 0.8244083118839852
+    },
+    {
+      "threshold": 0.5,
+      "precision": 0.7879549966909332,
+      "recall": 0.8547020818377602,
+      "f1": 0.8199724517906336
+    },
+    {
+      "threshold": 0.65,
+      "precision": 0.8531718963165075,
+      "recall": 0.7183058147882269,
+      "f1": 0.7799516719931405
+    },
+    {
+      "threshold": 0.75,
+      "precision": 0.9048038783605112,
+      "recall": 0.589519023689878,
+      "f1": 0.7139007215508998
+    }
+  ]
+}

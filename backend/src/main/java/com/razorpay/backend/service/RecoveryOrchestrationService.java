@@ -17,12 +17,15 @@ import org.springframework.web.client.RestClientException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Core orchestration layer for ReCover-AI (payment-failure recovery).
@@ -54,6 +57,7 @@ public class RecoveryOrchestrationService {
 
     private static final int MAX_ATTEMPTS = 3;
     private static final BigDecimal HIGH_VALUE_THRESHOLD = BigDecimal.valueOf(1500);
+    private static final int DEFAULT_SYNTHETIC_BATCH_SIZE = 1000;
 
     private static final BigDecimal COST_AUTO_RETRY = BigDecimal.valueOf(0.05);
     private static final BigDecimal COST_WHATSAPP_LINK = BigDecimal.valueOf(0.35);
@@ -151,6 +155,20 @@ public class RecoveryOrchestrationService {
 
         log.info("Batch complete: {} / {} events processed successfully", results.size(), events.size());
         return results;
+    }
+
+    /**
+     * Convenience overload for the "Trigger Batch Benchmark" button: generates
+     * {@code count} synthetic Indian payment failures matching typical Razorpay
+     * failure distributions and runs them through {@link #processBatch(List)}.
+     */
+    public List<RecoveryAudit> processBatch(int count) {
+        List<PaymentFailureEventDto> syntheticEvents = generateSyntheticEvents(count);
+        return processBatch(syntheticEvents);
+    }
+
+    public List<RecoveryAudit> processDefaultBenchmarkBatch() {
+        return processBatch(DEFAULT_SYNTHETIC_BATCH_SIZE);
     }
 
     /**
@@ -315,6 +333,94 @@ public class RecoveryOrchestrationService {
                 ? transactionId.substring(transactionId.length() - 8)
                 : transactionId;
         return "https://rzp.io/i/recover-" + suffix;
+    }
+
+    // ------------------------------------------------------------------
+    // Synthetic data generation (for the "Trigger Batch Benchmark" button)
+    // ------------------------------------------------------------------
+
+    private static final String[] FIRST_NAMES = {
+            "Aarav", "Vivaan", "Aditya", "Vihaan", "Arjun", "Sai", "Krishna", "Ishaan",
+            "Rohan", "Kabir", "Ananya", "Diya", "Saanvi", "Aadhya", "Kiara", "Myra",
+            "Priya", "Neha", "Pooja", "Sneha", "Ravi", "Suresh", "Manoj", "Deepak"
+    };
+    private static final String[] LAST_NAMES = {
+            "Sharma", "Verma", "Gupta", "Iyer", "Nair", "Reddy", "Patel", "Mehta",
+            "Singh", "Kumar", "Rao", "Joshi", "Chopra", "Malhotra", "Bose", "Pillai"
+    };
+    private static final String[] SOFT_GATEWAY_CODES = {"GATEWAY_TIMEOUT", "BAD_REQUEST_PAYMENT_TIMED_OUT"};
+    private static final String[] USER_FRICTION_CODES = {"INSUFFICIENT_FUNDS", "OTP_FAILED", "AUTHENTICATION_FAILED"};
+    private static final String[] MANDATE_CODES = {"MANDATE_EXPIRED"};
+    private static final String[] HARD_BLOCK_CODES = {"CARD_BLOCKED", "STOLEN_CARD"};
+
+    /**
+     * Generates synthetic Indian payment failures matching typical Razorpay
+     * failure distributions: 40% soft gateway drops, 35% user friction/UPI
+     * drops, 15% mandate failures, 10% hard card blocks.
+     */
+    private List<PaymentFailureEventDto> generateSyntheticEvents(int count) {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        List<PaymentFailureEventDto> events = new ArrayList<>(count);
+
+        for (int i = 0; i < count; i++) {
+            String errorCode = pickErrorCode(random);
+            String customerName = FIRST_NAMES[random.nextInt(FIRST_NAMES.length)]
+                    + " " + LAST_NAMES[random.nextInt(LAST_NAMES.length)];
+            String customerPhone = "+91" + (6 + random.nextInt(4)) + randomDigits(random, 9);
+            BigDecimal amount = randomAmount(random, errorCode);
+            int attemptsSoFar = pickAttempts(random);
+
+            events.add(new PaymentFailureEventDto(
+                    "pay_" + UUID.randomUUID().toString().replace("-", "").substring(0, 14),
+                    amount,
+                    errorCode,
+                    customerName,
+                    customerPhone,
+                    attemptsSoFar
+            ));
+        }
+
+        log.info("Generated {} synthetic failure events at {}", count, LocalDateTime.now());
+        return events;
+    }
+
+    private String pickErrorCode(ThreadLocalRandom random) {
+        int roll = random.nextInt(100);
+        if (roll < 40) {
+            return SOFT_GATEWAY_CODES[random.nextInt(SOFT_GATEWAY_CODES.length)];
+        } else if (roll < 75) {
+            return USER_FRICTION_CODES[random.nextInt(USER_FRICTION_CODES.length)];
+        } else if (roll < 90) {
+            return MANDATE_CODES[random.nextInt(MANDATE_CODES.length)];
+        } else {
+            return HARD_BLOCK_CODES[random.nextInt(HARD_BLOCK_CODES.length)];
+        }
+    }
+
+    private BigDecimal randomAmount(ThreadLocalRandom random, String errorCode) {
+        double value = switch (errorCode) {
+            case "MANDATE_EXPIRED" -> 99 + random.nextInt(1900);
+            case "CARD_BLOCKED", "STOLEN_CARD" -> 500 + random.nextDouble() * 74500;
+            case "INSUFFICIENT_FUNDS", "OTP_FAILED", "AUTHENTICATION_FAILED" -> 150 + random.nextDouble() * 24850;
+            default -> 99 + random.nextDouble() * 14901;
+        };
+        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private int pickAttempts(ThreadLocalRandom random) {
+        int roll = random.nextInt(100);
+        if (roll < 55) return 0;
+        if (roll < 80) return 1;
+        if (roll < 92) return 2;
+        return 3;
+    }
+
+    private String randomDigits(ThreadLocalRandom random, int length) {
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(random.nextInt(10));
+        }
+        return sb.toString();
     }
 
     private static BigDecimal nullSafe(BigDecimal value) {
