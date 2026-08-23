@@ -71,9 +71,9 @@ The recovery-probability model is a **calibrated `HistGradientBoostingClassifier
 
 | Metric | Held-out test value |
 |---|---|
-| **Precision** | 67.6% |
-| **Recall** | 98.2% |
-| **F1** | 0.801 |
+| **Precision** | 30.99% |
+| **Recall** | 62.28% |
+| **F1** | 0.7633 |
 | **ROC-AUC** | 0.867 |
 | Operating threshold | 0.20 |
 
@@ -81,17 +81,17 @@ The recovery-probability model is a **calibrated `HistGradientBoostingClassifier
 
 | | Predicted: attempt recovery | Predicted: abort |
 |---|---|---|
-| **Actual: recoverable** | TP = 6,844 | FN = 122 |
-| **Actual: not recoverable** | FP = 3,276 | TN = 1,758 |
+| **Actual: recoverable** | TP = 1177 | FN = 713 |
+| **Actual: not recoverable** | FP = 2621 | TN = 7489 |
 
 **Financial impact (held-out test):**
 
 | | Amount |
 |---|---|
-| 💰 Gross revenue recovered | **₹1,37,72,559** |
-| Intervention cost (wasted + successful) | ₹3,542 |
-| Missed revenue (recoverable, wrongly aborted) | ₹2,44,479 |
-| 🏆 **Net economic benefit** | **₹1,34,24,538** |
+| 💰 Gross revenue recovered | **₹ 2187890** |
+| Intervention cost (wasted + successful) | ₹1,329 |
+| Missed revenue (recoverable, wrongly aborted) | ₹1434745.9949804922 |
+| 🏆 **Net economic benefit** | **₹ 751815.6653479408** |
 
 *The threshold sits deliberately low (0.20) because a wasted ₹0.35 attempt costs almost nothing next to a missed transaction — the model is tuned to over-attempt, not under-attempt, recovery. That's a business decision baked into the math, not an accident.*
 
