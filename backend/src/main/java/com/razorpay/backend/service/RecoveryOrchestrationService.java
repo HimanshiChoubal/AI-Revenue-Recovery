@@ -57,12 +57,12 @@ public class RecoveryOrchestrationService {
 
     private static final int MAX_ATTEMPTS = 3;
     private static final BigDecimal HIGH_VALUE_THRESHOLD = BigDecimal.valueOf(1500);
-    private static final int DEFAULT_SYNTHETIC_BATCH_SIZE = 1000;
+    private static final int DEFAULT_SYNTHETIC_BATCH_SIZE = 5;
 
     private static final BigDecimal COST_AUTO_RETRY = BigDecimal.valueOf(0.05);
     private static final BigDecimal COST_WHATSAPP_LINK = BigDecimal.valueOf(0.35);
     private static final BigDecimal COST_VOICE_OUTREACH = BigDecimal.valueOf(1.20);
-
+    private static final BigDecimal BASELINE_RECOVERY_RATE = BigDecimal.valueOf(0.18);
     private final RecoveryAuditRepository auditRepository;
     private final PaymentLinkGateway paymentLinkGateway;
     private final RestClient aiEngineClient;
@@ -189,7 +189,29 @@ public class RecoveryOrchestrationService {
                     .doubleValue();
         }
 
-        return new DashboardStatsDto(totalAtRisk, totalRecovered, totalCost, totalTransactions, recoveryRate);
+        // Calculate ROI Multiple: (Recovered - Cost) / Cost
+        double roiMultiple = 0.0;
+        if (totalCost.compareTo(BigDecimal.ZERO) > 0) {
+            roiMultiple = totalRecovered.subtract(totalCost)
+                    .divide(totalCost, 2, RoundingMode.HALF_UP)
+                    .doubleValue();
+        }
+
+        // Calculate Incremental Recovery Value
+        BigDecimal baselineRecovery = totalAtRisk.multiply(BASELINE_RECOVERY_RATE)
+                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal incrementalRecoveryValue = totalRecovered.subtract(baselineRecovery);
+
+        // Pass all 7 arguments matching the DTO definition
+        return new DashboardStatsDto(
+                totalAtRisk,
+                totalRecovered,
+                totalCost,
+                totalTransactions,
+                recoveryRate,
+                incrementalRecoveryValue,
+                roiMultiple
+        );
     }
 
     // ------------------------------------------------------------------
@@ -303,14 +325,21 @@ public class RecoveryOrchestrationService {
             notify.put("sms", true);
             notify.put("email", false);
 
+            JSONObject notes = new JSONObject();
+            notes.put("source", "ReCover-AI automated recovery");
+            notes.put("failure_reason", event.errorCode());
+            notes.put("recovery_action", decision.action());
+
             JSONObject payload = new JSONObject();
             payload.put("amount", amountInPaise);
             payload.put("currency", "INR");
             payload.put("accept_partial", false);
-            payload.put("description", "ReCover-AI recovery link for txn " + event.transactionId());
+            payload.put("description", "Recover payment for order " + event.transactionId());
             payload.put("customer", customer);
             payload.put("notify", notify);
+            payload.put("notes", notes);
             payload.put("reference_id", event.transactionId());
+            payload.put("reminder_enable", false);
 
             String shortUrl = paymentLinkGateway.createPaymentLink(payload);
 
@@ -318,8 +347,8 @@ public class RecoveryOrchestrationService {
                     event.transactionId(), decision.action(), shortUrl);
             return shortUrl;
         } catch (RazorpayException e) {
-            log.warn("Razorpay link creation failed for txn={} (likely test/placeholder keys) — " +
-                    "using mock link instead. Reason: {}", event.transactionId(), e.getMessage());
+            log.error("Razorpay link creation FAILED for txn={} — full error before mock fallback: {}",
+                    event.transactionId(), e.getMessage(), e);
             return mockPaymentLink(event.transactionId());
         } catch (ArithmeticException e) {
             log.warn("Amount-to-paise conversion failed for txn={} — using mock link instead. Reason: {}",
@@ -328,11 +357,20 @@ public class RecoveryOrchestrationService {
         }
     }
 
+    /**
+     * Deterministic mock rzp.io-style link, keyed off the transaction id so
+     * repeated calls for the same transaction always produce the same URL.
+     *
+     * Uses a "/demo-" path segment specifically so the dashboard template
+     * can tell a mock/fallback link apart from a real Razorpay short_url
+     * (which never contains this segment) without needing a separate
+     * "is this real" field persisted on RecoveryAudit.
+     */
     private String mockPaymentLink(String transactionId) {
         String suffix = transactionId.length() > 8
                 ? transactionId.substring(transactionId.length() - 8)
                 : transactionId;
-        return "https://rzp.io/i/recover-" + suffix;
+        return "https://rzp.io/i/demo-recover-" + suffix;
     }
 
     // ------------------------------------------------------------------

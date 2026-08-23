@@ -29,8 +29,9 @@
         <!-- AI Action & Strategy -->
         <td class="px-4 py-3 max-w-[280px]">
             <div class="text-sm font-medium text-amber-300" th:text="${a.actionTaken}">VOICE_OUTREACH</div>
-            <div class="mt-0.5 text-[11px] leading-snug text-slate-500 line-clamp-2"
-                 th:text="${a.decisionTrace}">User friction on high-value txn; voice outreach maximizes recovery.</div>
+            <div class="mt-0.5 text-[11px] leading-snug text-slate-500"
+                 th:text="${a.decisionTrace}"
+                 th:title="${a.decisionTrace}">User friction on high-value txn; voice outreach maximizes recovery.</div>
         </td>
 
         <!-- Intervention Cost -->

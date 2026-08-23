@@ -3,7 +3,7 @@ package com.razorpay.backend.repository;
 import com.razorpay.backend.entity.RecoveryAudit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
-
+import com.razorpay.backend.dto.ActionBreakdown;
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -14,9 +14,8 @@ public interface RecoveryAuditRepository extends JpaRepository<RecoveryAudit, Lo
     /**
      * Sum of transaction amounts still pending recovery (status = 'PENDING').
      */
-    @Query("SELECT COALESCE(SUM(r.amount), 0) FROM RecoveryAudit r WHERE r.status = 'PENDING'")
+    @Query("SELECT COALESCE(SUM(r.amount), 0) FROM RecoveryAudit r")
     BigDecimal getTotalAtRisk();
-
     /**
      * Sum of amounts successfully recovered (status = 'RECOVERED').
      */
@@ -32,4 +31,13 @@ public interface RecoveryAuditRepository extends JpaRepository<RecoveryAudit, Lo
     List<RecoveryAudit> findByStatus(String status);
 
     List<RecoveryAudit> findByTransactionId(String transactionId);
+
+    @Query("SELECT new com.razorpay.backend.dto.ActionBreakdown(" +
+            "r.actionTaken, " +
+            "COUNT(r), " +
+            "(SUM(CASE WHEN r.status = 'RECOVERED' THEN 1.0 ELSE 0.0 END) * 100.0 / COUNT(r)), " +
+            "COALESCE(SUM(r.interventionCost), 0)) " +
+            "FROM RecoveryAudit r " +
+            "GROUP BY r.actionTaken")
+    List<ActionBreakdown> getActionBreakdown();
 }

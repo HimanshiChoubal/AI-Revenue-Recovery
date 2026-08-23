@@ -20,14 +20,14 @@ ERROR_CODES = [
     "CARD_BLOCKED",
     "STOLEN_CARD",
 ]
-
+INTERVENTION_COST = 0.35
 # Per-error-code contribution to the recovery-success logit. Soft
 # technical failures recover easily (gateway retry usually just works);
 # user friction is a coin flip depending on outreach; terminal
 # instrument failures almost never recover.
 ERROR_CODE_LOGIT = {
-    "GATEWAY_TIMEOUT": 2.6,
-    "BAD_REQUEST_PAYMENT_TIMED_OUT": 2.3,
+    "GATEWAY_TIMEOUT": 1.0,
+    "BAD_REQUEST_PAYMENT_TIMED_OUT": 0.8,
     "INSUFFICIENT_FUNDS": -0.1,
     "OTP_FAILED": 0.2,
     "AUTHENTICATION_FAILED": -0.3,
@@ -35,11 +35,6 @@ ERROR_CODE_LOGIT = {
     "CARD_BLOCKED": -4.0,
     "STOLEN_CARD": -4.5,
 }
-
-# Marginal cost of attempting a recovery intervention (the cheapest
-# common action — a WhatsApp smart link). Used both as the false-positive
-# cost in the threshold sweep and in the final financial impact table.
-INTERVENTION_COST = 0.35
 
 
 def generate_realistic_data(n_samples=60000):
@@ -65,9 +60,9 @@ def generate_realistic_data(n_samples=60000):
     is_daytime = ((hour_of_day >= 9) & (hour_of_day <= 21)).astype(float)
 
     z = (
-        -0.6
+        -1.9
         + error_code_effect
-        + (customer_history_recovery_rate * 2.8)
+        + (customer_history_recovery_rate * 1.5)
         - (attempts_so_far * 0.85)
         + (is_daytime * 0.45)
         - (np.log(amounts) * 0.12)

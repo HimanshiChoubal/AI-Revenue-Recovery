@@ -1,45 +1,45 @@
 {
-  "precision": 0.6761885934565582,
-  "recall": 0.9820556991099627,
-  "f1_score": 0.8009131885500205,
-  "roc_auc": 0.8665807507513366,
+  "precision": 0.30989994734070564,
+  "recall": 0.6227513227513227,
+  "f1_score": 0.4138537271448664,
+  "roc_auc": 0.7633002318412803,
   "operating_threshold": 0.2,
   "confusion_matrix": {
-    "TP": 6841,
-    "FP": 3276,
-    "TN": 1758,
-    "FN": 125
+    "TP": 1177,
+    "FP": 2621,
+    "TN": 7489,
+    "FN": 713
   },
   "financial_impact": {
-    "gross_revenue_recovered_inr": 13759437.373025842,
-    "intervention_cost_total_inr": 3540.95,
-    "missed_revenue_fn_inr": 257600.74299678483,
-    "net_economic_benefit_inr": 13498295.680029059
+    "gross_revenue_recovered_inr": 2187890.9603284327,
+    "intervention_cost_total_inr": 1329.3,
+    "missed_revenue_fn_inr": 1434745.9949804922,
+    "net_economic_benefit_inr": 751815.6653479408
   },
   "threshold_tradeoffs": [
     {
       "threshold": 0.35,
-      "precision": 0.7324854975457386,
-      "recall": 0.942713567839196,
-      "f1": 0.8244083118839852
+      "precision": 0.4212328767123288,
+      "recall": 0.19523809523809524,
+      "f1": 0.2668112798264642
     },
     {
       "threshold": 0.5,
-      "precision": 0.7879549966909332,
-      "recall": 0.8547020818377602,
-      "f1": 0.8199724517906336
+      "precision": 0.5283018867924528,
+      "recall": 0.014814814814814815,
+      "f1": 0.028821410190427176
     },
     {
       "threshold": 0.65,
-      "precision": 0.8531718963165075,
-      "recall": 0.7183058147882269,
-      "f1": 0.7799516719931405
+      "precision": 0.3076923076923077,
+      "recall": 0.0021164021164021165,
+      "f1": 0.004203888596952181
     },
     {
       "threshold": 0.75,
-      "precision": 0.9048038783605112,
-      "recall": 0.589519023689878,
-      "f1": 0.7139007215508998
+      "precision": 0.5,
+      "recall": 0.0010582010582010583,
+      "f1": 0.0021119324181626186
     }
   ]
 }
