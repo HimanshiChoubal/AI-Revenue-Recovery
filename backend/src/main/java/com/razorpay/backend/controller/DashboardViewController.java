@@ -9,14 +9,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 
 import java.util.List;
 
-/**
- * Serves the server-rendered Thymeleaf dashboard shell. Subsequent live
- * updates (metric cards, audit ledger rows) are fetched via HTMX polling
- * against {@link RecoveryApiController}.
- */
+
 @Controller
 public class DashboardViewController {
 
@@ -41,5 +40,14 @@ public class DashboardViewController {
 
         log.debug("Rendering dashboard shell with {} recent audit rows", audits.size());
         return "dashboard";
+    }
+    @GetMapping("/transactions/{id}")
+    public String transactionDetail(@PathVariable Long id, Model model) {
+        RecoveryAudit audit = auditRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transaction not found"));
+
+        model.addAttribute("audit", audit);
+        log.debug("Rendering transaction detail for id={}", id);
+        return "transaction_detail";
     }
 }

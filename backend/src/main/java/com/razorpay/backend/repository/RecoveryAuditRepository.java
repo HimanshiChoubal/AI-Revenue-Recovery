@@ -19,7 +19,7 @@ public interface RecoveryAuditRepository extends JpaRepository<RecoveryAudit, Lo
     /**
      * Sum of amounts successfully recovered (status = 'RECOVERED').
      */
-    @Query("SELECT COALESCE(SUM(r.recoveredAmount), 0) FROM RecoveryAudit r WHERE r.status = 'RECOVERED'")
+    @Query("SELECT COALESCE(SUM(r.recoveredAmount), 0) FROM RecoveryAudit r WHERE r.status IN ('RECOVERED', 'CONFIRMED_RECOVERED')")
     BigDecimal getTotalRecovered();
 
     /**
@@ -31,7 +31,7 @@ public interface RecoveryAuditRepository extends JpaRepository<RecoveryAudit, Lo
     List<RecoveryAudit> findByStatus(String status);
 
     List<RecoveryAudit> findByTransactionId(String transactionId);
-
+    List<RecoveryAudit> findByPaymentLinkUrl(String paymentLinkUrl);
     @Query("SELECT new com.razorpay.backend.dto.ActionBreakdown(" +
             "r.actionTaken, " +
             "COUNT(r), " +

@@ -25,20 +25,9 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadLocalRandom;
 
-/**
- * Core orchestration layer for ReCover-AI (payment-failure recovery).
- *
- * Decision policy:
- *   - ABORT              -> attempts_so_far >= 3, or error in {CARD_BLOCKED, STOLEN_CARD}
- *   - AUTO_RETRY          -> GATEWAY_TIMEOUT (soft technical failure, safe silent retry)
- *   - VOICE_OUTREACH      -> user-side friction on a high-value transaction (>= HIGH_VALUE_THRESHOLD)
- *   - WHATSAPP_LINK       -> everything else
- *
- * Calls the Python AI diagnostic engine first; if it's unreachable, the
- * same policy is applied locally so recovery never silently stalls.
- */
 @Service
 public class RecoveryOrchestrationService {
 
@@ -54,15 +43,25 @@ public class RecoveryOrchestrationService {
 
     private static final String STATUS_RECOVERED = "RECOVERED";
     private static final String STATUS_ABORTED = "ABORTED";
+    private static final String STATUS_PENDING_CONFIRMATION = "PENDING_CONFIRMATION";
+    private static final String STATUS_CONFIRMED_RECOVERED = "CONFIRMED_RECOVERED";
 
     private static final int MAX_ATTEMPTS = 3;
     private static final BigDecimal HIGH_VALUE_THRESHOLD = BigDecimal.valueOf(1500);
-    private static final int DEFAULT_SYNTHETIC_BATCH_SIZE = 5;
+    private static final int DEFAULT_SYNTHETIC_BATCH_SIZE = 10;
 
     private static final BigDecimal COST_AUTO_RETRY = BigDecimal.valueOf(0.05);
     private static final BigDecimal COST_WHATSAPP_LINK = BigDecimal.valueOf(0.35);
     private static final BigDecimal COST_VOICE_OUTREACH = BigDecimal.valueOf(1.20);
     private static final BigDecimal BASELINE_RECOVERY_RATE = BigDecimal.valueOf(0.18);
+
+    private static final int RAZORPAY_MAX_CONCURRENT_CALLS = 1;
+    private static final long RAZORPAY_CALL_DELAY_MS = 800;
+    private static final long RAZORPAY_RATE_LIMIT_RETRY_DELAY_MS = 2000;
+    private static final String RATE_LIMIT_ERROR_SUBSTRING = "Too many requests";
+
+    private final Semaphore razorpayCallSemaphore = new Semaphore(RAZORPAY_MAX_CONCURRENT_CALLS);
+
     private final RecoveryAuditRepository auditRepository;
     private final PaymentLinkGateway paymentLinkGateway;
     private final RestClient aiEngineClient;
@@ -79,13 +78,25 @@ public class RecoveryOrchestrationService {
         this.aiEngineClient = restClientBuilder.build();
     }
 
-    /**
-     * Diagnose a single failure, act on the decision, and persist the
-     * outcome to the audit ledger. Never throws for a downstream failure
-     * (AI engine down, Razorpay API error) — those are captured as part
-     * of the audit trail instead.
-     */
+    // --- Overloaded methods to support existing controllers and webhooks ---
     public RecoveryAudit processFailure(PaymentFailureEventDto event) {
+        return processFailure(event, false);
+    }
+
+    public List<RecoveryAudit> processBatch(List<PaymentFailureEventDto> events) {
+        return processBatch(events, false);
+    }
+
+    public List<RecoveryAudit> processBatch(int count) {
+        return processBatch(count, false);
+    }
+
+    public List<RecoveryAudit> processDefaultBenchmarkBatch() {
+        return processBatch(DEFAULT_SYNTHETIC_BATCH_SIZE, false);
+    }
+    // ------------------------------------------------------------------------
+
+    public RecoveryAudit processFailure(PaymentFailureEventDto event, boolean useRealApi) {
         if (event == null || event.transactionId() == null) {
             throw new IllegalArgumentException("PaymentFailureEventDto and its transactionId must not be null");
         }
@@ -94,16 +105,25 @@ public class RecoveryOrchestrationService {
 
         String paymentLinkUrl = null;
         String status;
+        boolean isRealPaymentLink = false;
 
         if (ACTION_ABORT.equals(decision.action())) {
             status = STATUS_ABORTED;
         } else if (LIVE_LINK_ACTIONS.contains(decision.action())) {
-            // createRazorpayPaymentLink always returns a usable URL (live or
-            // deterministic mock), so these actions are treated as recovered.
-            paymentLinkUrl = createRazorpayPaymentLink(event, decision);
-            status = STATUS_RECOVERED;
+            paymentLinkUrl = createRazorpayPaymentLink(event, decision, useRealApi);
+            isRealPaymentLink = useRealApi && paymentLinkUrl != null && !paymentLinkUrl.contains("/demo-");
+
+            if (isRealPaymentLink) {
+                // Real link dispatched to a real payment page — status stays
+                // unresolved until payment_link.paid webhook confirms it.
+                status = STATUS_PENDING_CONFIRMATION;
+            } else {
+                // Synthetic/mock link: no real customer to confirm anything,
+                // so the benchmark still resolves instantly for offline metrics.
+                status = STATUS_RECOVERED;
+            }
         } else {
-            // AUTO_RETRY: silent retry, no customer-facing link needed.
+            // AUTO_RETRY: silent retry on backup gateway, resolves immediately
             status = STATUS_RECOVERED;
         }
 
@@ -119,18 +139,16 @@ public class RecoveryOrchestrationService {
                 .recoveredAmount(STATUS_RECOVERED.equals(status) ? nullSafe(event.amount()) : BigDecimal.ZERO)
                 .status(status)
                 .paymentLinkUrl(paymentLinkUrl)
+                .isRealPaymentLink(isRealPaymentLink)
                 .build();
 
         RecoveryAudit saved = auditRepository.save(audit);
-        log.info("Processed txn={} action={} status={} cost=₹{}",
-                event.transactionId(), decision.action(), status, decision.costInr());
+        log.info("Processed txn={} action={} status={} useRealApi={} cost=₹{}",
+                event.transactionId(), decision.action(), status, useRealApi, decision.costInr());
         return saved;
     }
 
-    /**
-     * Fan a batch of failure events out across Java 21 virtual threads.
-     */
-    public List<RecoveryAudit> processBatch(List<PaymentFailureEventDto> events) {
+    public List<RecoveryAudit> processBatch(List<PaymentFailureEventDto> events, boolean useRealApi) {
         if (events == null || events.isEmpty()) {
             return List.of();
         }
@@ -141,7 +159,7 @@ public class RecoveryOrchestrationService {
             List<Future<RecoveryAudit>> futures = new ArrayList<>(events.size());
 
             for (PaymentFailureEventDto event : events) {
-                futures.add(executor.submit(() -> processFailure(event)));
+                futures.add(executor.submit(() -> processFailure(event, useRealApi)));
             }
 
             for (Future<RecoveryAudit> future : futures) {
@@ -153,56 +171,53 @@ public class RecoveryOrchestrationService {
             }
         }
 
-        log.info("Batch complete: {} / {} events processed successfully", results.size(), events.size());
+        log.info("Batch complete: {} / {} events processed successfully (useRealApi={})",
+                results.size(), events.size(), useRealApi);
         return results;
     }
 
-    /**
-     * Convenience overload for the "Trigger Batch Benchmark" button: generates
-     * {@code count} synthetic Indian payment failures matching typical Razorpay
-     * failure distributions and runs them through {@link #processBatch(List)}.
-     */
-    public List<RecoveryAudit> processBatch(int count) {
+    public List<RecoveryAudit> processBatch(int count, boolean useRealApi) {
         List<PaymentFailureEventDto> syntheticEvents = generateSyntheticEvents(count);
-        return processBatch(syntheticEvents);
+        return processBatch(syntheticEvents, useRealApi);
     }
 
-    public List<RecoveryAudit> processDefaultBenchmarkBatch() {
-        return processBatch(DEFAULT_SYNTHETIC_BATCH_SIZE);
-    }
-
-    /**
-     * Compute aggregate recovery metrics for the dashboard.
-     */
     public DashboardStatsDto getDashboardStats() {
         BigDecimal totalAtRisk = nullSafe(auditRepository.getTotalAtRisk());
         BigDecimal totalRecovered = nullSafe(auditRepository.getTotalRecovered());
         BigDecimal totalCost = nullSafe(auditRepository.getTotalCost());
         long totalTransactions = auditRepository.count();
 
+        // Using .size() for compatibility, but counting BOTH synthetic and real verified recoveries
+        long recoveredRowCount = auditRepository.findByStatus(STATUS_RECOVERED).size();
+        long confirmedRecoveredRowCount = auditRepository.findByStatus(STATUS_CONFIRMED_RECOVERED).size();
+        long abortedRowCount = auditRepository.findByStatus(STATUS_ABORTED).size();
+
+        long totalSuccessfulRecoveries = recoveredRowCount + confirmedRecoveredRowCount;
+
+        log.info("=== DASHBOARD STATS DIAGNOSTIC ===");
+        log.info("Row breakdown: RECOVERED={}, CONFIRMED_RECOVERED={}, ABORTED={}, total={}",
+                recoveredRowCount, confirmedRecoveredRowCount, abortedRowCount, totalTransactions);
+        log.info("=== END DIAGNOSTIC ===");
+
         double recoveryRate = 0.0;
         if (totalTransactions > 0) {
-            long recoveredCount = auditRepository.findByStatus(STATUS_RECOVERED).size();
-            recoveryRate = BigDecimal.valueOf(recoveredCount)
+            recoveryRate = BigDecimal.valueOf(totalSuccessfulRecoveries)
                     .divide(BigDecimal.valueOf(totalTransactions), 4, RoundingMode.HALF_UP)
                     .multiply(BigDecimal.valueOf(100))
                     .doubleValue();
         }
 
-        // Calculate ROI Multiple: (Recovered - Cost) / Cost
         double roiMultiple = 0.0;
         if (totalCost.compareTo(BigDecimal.ZERO) > 0) {
             roiMultiple = totalRecovered.subtract(totalCost)
-                    .divide(totalCost, 2, RoundingMode.HALF_UP)
+                    .divide(totalCost, 1, RoundingMode.HALF_UP)
                     .doubleValue();
         }
 
-        // Calculate Incremental Recovery Value
         BigDecimal baselineRecovery = totalAtRisk.multiply(BASELINE_RECOVERY_RATE)
                 .setScale(2, RoundingMode.HALF_UP);
         BigDecimal incrementalRecoveryValue = totalRecovered.subtract(baselineRecovery);
 
-        // Pass all 7 arguments matching the DTO definition
         return new DashboardStatsDto(
                 totalAtRisk,
                 totalRecovered,
@@ -214,15 +229,6 @@ public class RecoveryOrchestrationService {
         );
     }
 
-    // ------------------------------------------------------------------
-    // Decision logic
-    // ------------------------------------------------------------------
-
-    /**
-     * Calls the Python diagnostic engine. If it's unreachable or errors
-     * out, applies the same decision policy locally so recovery never
-     * silently stalls just because the AI microservice is down.
-     */
     private RecoveryDecisionDto diagnoseWithFallback(PaymentFailureEventDto event) {
         try {
             RecoveryDecisionDto decision = aiEngineClient.post()
@@ -242,16 +248,6 @@ public class RecoveryOrchestrationService {
         }
     }
 
-    /**
-     * The bounded, deterministic recovery policy, applied identically
-     * whether it's used as the AI engine's own logic or as this
-     * service's offline fallback:
-     *
-     *   ABORT          - attempts_so_far >= 3, or error in {CARD_BLOCKED, STOLEN_CARD}
-     *   AUTO_RETRY     - GATEWAY_TIMEOUT
-     *   VOICE_OUTREACH - user-side friction, amount >= ₹1,500
-     *   WHATSAPP_LINK  - everything else
-     */
     private RecoveryDecisionDto localPolicyDecision(PaymentFailureEventDto event) {
         String errorCode = event.errorCode() != null ? event.errorCode().trim().toUpperCase() : "";
         BigDecimal amount = nullSafe(event.amount());
@@ -297,20 +293,41 @@ public class RecoveryOrchestrationService {
                 "WHATSAPP::" + event.customerPhone());
     }
 
-    /**
-     * Creates a live Razorpay test payment link (rzp.io) for a customer to
-     * complete their failed payment in one click. Falls back to a
-     * deterministic mock rzp.io link if the gateway call fails for any
-     * reason (placeholder test keys, network issue), so demo/benchmark
-     * runs still populate recovered metrics realistically.
-     */
-    private String createRazorpayPaymentLink(PaymentFailureEventDto event, RecoveryDecisionDto decision) {
+    private String createRazorpayPaymentLink(PaymentFailureEventDto event, RecoveryDecisionDto decision,
+                                             boolean useRealApi) {
+        if (!useRealApi) {
+            return mockPaymentLink(event.transactionId());
+        }
+
         if (event.amount() == null || event.amount().compareTo(BigDecimal.ZERO) <= 0) {
             log.warn("Invalid amount for txn={}; using mock payment link instead of skipping.",
                     event.transactionId());
             return mockPaymentLink(event.transactionId());
         }
 
+        try {
+            razorpayCallSemaphore.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Interrupted while waiting for Razorpay call slot for txn={} — using mock link.",
+                    event.transactionId());
+            return mockPaymentLink(event.transactionId());
+        }
+
+        try {
+            return attemptRazorpayLinkCreation(event, decision, false);
+        } finally {
+            try {
+                Thread.sleep(RAZORPAY_CALL_DELAY_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            razorpayCallSemaphore.release();
+        }
+    }
+
+    private String attemptRazorpayLinkCreation(PaymentFailureEventDto event, RecoveryDecisionDto decision,
+                                               boolean isRetry) {
         try {
             long amountInPaise = event.amount()
                     .multiply(BigDecimal.valueOf(100))
@@ -347,6 +364,20 @@ public class RecoveryOrchestrationService {
                     event.transactionId(), decision.action(), shortUrl);
             return shortUrl;
         } catch (RazorpayException e) {
+            boolean isRateLimited = e.getMessage() != null && e.getMessage().contains(RATE_LIMIT_ERROR_SUBSTRING);
+
+            if (isRateLimited && !isRetry) {
+                log.warn("Rate limited by Razorpay for txn={} — retrying once after {}ms.",
+                        event.transactionId(), RAZORPAY_RATE_LIMIT_RETRY_DELAY_MS);
+                try {
+                    Thread.sleep(RAZORPAY_RATE_LIMIT_RETRY_DELAY_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return mockPaymentLink(event.transactionId());
+                }
+                return attemptRazorpayLinkCreation(event, decision, true);
+            }
+
             log.error("Razorpay link creation FAILED for txn={} — full error before mock fallback: {}",
                     event.transactionId(), e.getMessage(), e);
             return mockPaymentLink(event.transactionId());
@@ -357,15 +388,6 @@ public class RecoveryOrchestrationService {
         }
     }
 
-    /**
-     * Deterministic mock rzp.io-style link, keyed off the transaction id so
-     * repeated calls for the same transaction always produce the same URL.
-     *
-     * Uses a "/demo-" path segment specifically so the dashboard template
-     * can tell a mock/fallback link apart from a real Razorpay short_url
-     * (which never contains this segment) without needing a separate
-     * "is this real" field persisted on RecoveryAudit.
-     */
     private String mockPaymentLink(String transactionId) {
         String suffix = transactionId.length() > 8
                 ? transactionId.substring(transactionId.length() - 8)
@@ -373,9 +395,7 @@ public class RecoveryOrchestrationService {
         return "https://rzp.io/i/demo-recover-" + suffix;
     }
 
-    // ------------------------------------------------------------------
-    // Synthetic data generation (for the "Trigger Batch Benchmark" button)
-    // ------------------------------------------------------------------
+    // --- Synthetic Data Generation Helpers ---
 
     private static final String[] FIRST_NAMES = {
             "Aarav", "Vivaan", "Aditya", "Vihaan", "Arjun", "Sai", "Krishna", "Ishaan",
@@ -391,11 +411,6 @@ public class RecoveryOrchestrationService {
     private static final String[] MANDATE_CODES = {"MANDATE_EXPIRED"};
     private static final String[] HARD_BLOCK_CODES = {"CARD_BLOCKED", "STOLEN_CARD"};
 
-    /**
-     * Generates synthetic Indian payment failures matching typical Razorpay
-     * failure distributions: 40% soft gateway drops, 35% user friction/UPI
-     * drops, 15% mandate failures, 10% hard card blocks.
-     */
     private List<PaymentFailureEventDto> generateSyntheticEvents(int count) {
         ThreadLocalRandom random = ThreadLocalRandom.current();
         List<PaymentFailureEventDto> events = new ArrayList<>(count);

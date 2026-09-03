@@ -12,24 +12,25 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import java.util.List;
 
-/**
- * JSON ingestion endpoints plus the HTMX-polled partials that keep the
- * dashboard live (metric cards + audit ledger table body).
- */
 @Controller
 @RequestMapping("/api/v1")
 public class RecoveryApiController {
 
     private static final Logger log = LoggerFactory.getLogger(RecoveryApiController.class);
     private static final int DEFAULT_BENCHMARK_SIZE = 1000;
+    private static final int DEMO_BATCH_SIZE = 8;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final RecoveryOrchestrationService orchestrationService;
     private final RecoveryAuditRepository auditRepository;
@@ -49,7 +50,8 @@ public class RecoveryApiController {
         }
 
         try {
-            RecoveryAudit audit = orchestrationService.processFailure(event);
+            // Single manual ingests are rare, low-volume — safe to use the real API.
+            RecoveryAudit audit = orchestrationService.processFailure(event, true);
             return ResponseEntity.status(HttpStatus.CREATED).body(audit);
         } catch (Exception e) {
             log.error("Failed to ingest single failure event for txn={}", event.transactionId(), e);
@@ -58,30 +60,40 @@ public class RecoveryApiController {
     }
 
     /**
-     * Ingest and process a batch of failure events. If the request body is
-     * empty/null (as sent by the dashboard's "Trigger Batch Benchmark"
-     * button, which POSTs with no body), automatically generates and
-     * processes {@value #DEFAULT_BENCHMARK_SIZE} synthetic transactions
-     * instead of rejecting the request. Always returns an HTML snippet
-     * suitable for direct HTMX swap into #benchmark-status.
+     * ONLY method mapped to this path — the earlier duplicate is gone.
+     * useRealApi is derived from size, never trusted from the client
+     * directly: only an explicit small ?size (<= DEMO_BATCH_SIZE) ever
+     * touches the real Razorpay API. Every other call — including
+     * generator.py's default 1000-txn / body-only requests with no size
+     * param — is mock-only, no network call, no rate-limit risk.
      */
     @PostMapping(value = "/failures/ingest-batch", produces = MediaType.TEXT_HTML_VALUE)
     @ResponseBody
     public ResponseEntity<String> ingestBatch(
-            @RequestBody(required = false) List<PaymentFailureEventDto> events) {
+            @RequestBody(required = false) String rawBody,
+            @RequestParam(required = false) Integer size) throws com.fasterxml.jackson.core.JsonProcessingException {
 
         try {
+            List<PaymentFailureEventDto> events = null;
+            if (rawBody != null && !rawBody.isBlank()) {
+                events = objectMapper.readValue(rawBody,
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, PaymentFailureEventDto.class));
+            }
+
             List<RecoveryAudit> results;
             int requestedSize;
+            boolean useRealApi = (size != null && size > 0 && size <= DEMO_BATCH_SIZE);
 
             if (events == null || events.isEmpty()) {
-                requestedSize = DEFAULT_BENCHMARK_SIZE;
-                log.info("Empty batch request received — generating {} synthetic transactions", requestedSize);
-                results = orchestrationService.processBatch(requestedSize);
+                requestedSize = (size != null && size > 0) ? size : DEFAULT_BENCHMARK_SIZE;
+                log.info("Empty batch request received — generating {} synthetic transactions (useRealApi={})",
+                        requestedSize, useRealApi);
+                results = orchestrationService.processBatch(requestedSize, useRealApi);
             } else {
                 requestedSize = events.size();
-                log.info("Ingesting batch of {} failure events via virtual threads", requestedSize);
-                results = orchestrationService.processBatch(events);
+                log.info("Ingesting batch of {} failure events via virtual threads (useRealApi={})",
+                        requestedSize, useRealApi);
+                results = orchestrationService.processBatch(events, useRealApi);
             }
 
             long recoveredCount = results.stream()
@@ -108,11 +120,6 @@ public class RecoveryApiController {
         return ResponseEntity.ok(orchestrationService.getDashboardStats());
     }
 
-    /**
-     * Returns the metric cards as a rendered HTML fragment (not raw JSON)
-     * so HTMX can swap it directly into the dashboard's #metrics-grid
-     * container on every poll.
-     */
     @GetMapping("/dashboard/metrics")
     public String dashboardMetricsFragment(Model model) {
         DashboardStatsDto stats = orchestrationService.getDashboardStats();

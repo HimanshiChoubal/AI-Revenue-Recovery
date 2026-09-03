@@ -37,26 +37,27 @@ ERROR_CODE_LOGIT = {
 }
 
 
+import numpy as np
+import pandas as pd
+
 def generate_realistic_data(n_samples=60000):
     np.random.seed(42)
 
-    # 1. Base transaction / context features
+    # 1. Base features
     amounts = np.random.lognormal(mean=7.3, sigma=0.80, size=n_samples)
-    amounts = np.clip(amounts, 100, 60000)
+    amounts = np.round(np.clip(amounts, 100, 60000), 2)
 
-    error_code = np.random.choice(
-        ERROR_CODES, size=n_samples,
-        p=[0.28, 0.12, 0.22, 0.10, 0.08, 0.10, 0.07, 0.03],
-    )
+    # Ensure probabilities match length and normalize
+    p_dist = np.array([0.28, 0.12, 0.22, 0.10, 0.08, 0.10, 0.07, 0.03])
+    p_dist = p_dist / p_dist.sum()
+
+    error_code = np.random.choice(ERROR_CODES, size=n_samples, p=p_dist)
     attempts_so_far = np.random.choice([0, 1, 2, 3], size=n_samples, p=[0.55, 0.25, 0.12, 0.08])
     hour_of_day = np.random.randint(0, 24, size=n_samples)
     customer_history_recovery_rate = np.random.beta(a=3.0, b=2.2, size=n_samples)
 
-    # 2. Recovery-success separation logic with interaction signals.
-    # Recovery correlates with: soft/technical error codes, strong prior
-    # recovery history, fewer prior attempts (less customer fatigue),
-    # daytime outreach hours, and lower transaction amount.
-    error_code_effect = np.array([ERROR_CODE_LOGIT[c] for c in error_code])
+    # 2. Vectorized logit computation
+    error_code_effect = np.vectorize(ERROR_CODE_LOGIT.get)(error_code).astype(float)
     is_daytime = ((hour_of_day >= 9) & (hour_of_day <= 21)).astype(float)
 
     z = (
@@ -68,6 +69,11 @@ def generate_realistic_data(n_samples=60000):
         - (np.log(amounts) * 0.12)
     )
     probs = 1 / (1 + np.exp(-z))
+
+    # 3. Enforce deterministic zero-probability business logic
+    hard_abort_mask = (attempts_so_far >= 3) | np.isin(error_code, ["CARD_BLOCKED", "STOLEN_CARD"])
+    probs[hard_abort_mask] = 0.0
+
     recovery_successful = np.random.binomial(1, probs)
 
     df = pd.DataFrame({
@@ -78,6 +84,10 @@ def generate_realistic_data(n_samples=60000):
         'customer_history_recovery_rate': customer_history_recovery_rate,
         'recovery_successful': recovery_successful,
     })
+
+    df.to_csv('synthetic_payment_failures.csv', index=False)
+    print(df.head(10))
+    print(df['recovery_successful'].value_counts(normalize=True))
     return df
 
 

@@ -16,6 +16,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
+import static org.mockito.Mockito.lenient;
+
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -23,22 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
-/**
- * Unit tests for RecoveryOrchestrationService's local policy fallback:
- *
- *   ABORT          - attempts_so_far >= 3, or error in {CARD_BLOCKED, STOLEN_CARD}
- *   AUTO_RETRY     - GATEWAY_TIMEOUT
- *   VOICE_OUTREACH - user-side friction, amount >= ₹1,500
- *   WHATSAPP_LINK  - everything else
- *
- * The AI engine is pointed at an unreachable URL with a request factory
- * that always throws, so every test exercises localPolicyDecision()
- * deterministically and offline (no real network calls to the Python
- * engine). Razorpay payment link creation is mocked via the plain
- * PaymentLinkGateway interface rather than the SDK's RazorpayClient
- * class directly, since mocking third-party SDK types with Mockito's
- * inline bytecode instrumentation can fail depending on JVM version.
- */
+
 @ExtendWith(MockitoExtension.class)
 class RecoveryOrchestrationServiceTest {
 
@@ -62,7 +49,7 @@ class RecoveryOrchestrationServiceTest {
         service = new RecoveryOrchestrationService(
                 auditRepository, paymentLinkGateway, builder, "http://localhost:9999/unreachable");
 
-        when(auditRepository.save(any(RecoveryAudit.class)))
+        lenient().when(auditRepository.save(any(RecoveryAudit.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -72,7 +59,7 @@ class RecoveryOrchestrationServiceTest {
                 "pay_hardblock01", BigDecimal.valueOf(2500), "CARD_BLOCKED",
                 "Test Customer", "+919999999999", 0);
 
-        RecoveryAudit result = service.processFailure(event);
+        RecoveryAudit result = service.processFailure(event, false);
 
         assertThat(result.getStatus()).isEqualTo("ABORTED");
         assertThat(result.getActionTaken()).isEqualTo("ABORT");
@@ -85,7 +72,7 @@ class RecoveryOrchestrationServiceTest {
                 "pay_stolen01", BigDecimal.valueOf(3200), "STOLEN_CARD",
                 "Test Customer", "+919999999999", 0);
 
-        RecoveryAudit result = service.processFailure(event);
+        RecoveryAudit result = service.processFailure(event, true);
 
         assertThat(result.getStatus()).isEqualTo("ABORTED");
         assertThat(result.getActionTaken()).isEqualTo("ABORT");
@@ -97,7 +84,7 @@ class RecoveryOrchestrationServiceTest {
                 "pay_maxattempts01", BigDecimal.valueOf(500), "GATEWAY_TIMEOUT",
                 "Test Customer", "+919999999999", 3);
 
-        RecoveryAudit result = service.processFailure(event);
+        RecoveryAudit result = service.processFailure(event, true);
 
         assertThat(result.getStatus()).isEqualTo("ABORTED");
         assertThat(result.getActionTaken()).isEqualTo("ABORT");
@@ -109,7 +96,7 @@ class RecoveryOrchestrationServiceTest {
                 "pay_gwtimeout01", BigDecimal.valueOf(800), "GATEWAY_TIMEOUT",
                 "Test Customer", "+919999999999", 0);
 
-        RecoveryAudit result = service.processFailure(event);
+        RecoveryAudit result = service.processFailure(event, false);
 
         assertThat(result.getStatus()).isEqualTo("RECOVERED");
         assertThat(result.getActionTaken()).isEqualTo("AUTO_RETRY");
@@ -123,7 +110,7 @@ class RecoveryOrchestrationServiceTest {
                 "pay_highvalue123456", BigDecimal.valueOf(5000), "INSUFFICIENT_FUNDS",
                 "Priya Sharma", "+919876543210", 0);
 
-        RecoveryAudit result = service.processFailure(event);
+        RecoveryAudit result = service.processFailure(event, false);
 
         assertThat(result.getActionTaken()).isEqualTo("VOICE_OUTREACH");
         assertThat(result.getInterventionCost()).isEqualByComparingTo(BigDecimal.valueOf(1.20));
@@ -135,7 +122,7 @@ class RecoveryOrchestrationServiceTest {
                 "pay_lowvalue01", BigDecimal.valueOf(600), "INSUFFICIENT_FUNDS",
                 "Rohan Iyer", "+919812345678", 0);
 
-        RecoveryAudit result = service.processFailure(event);
+        RecoveryAudit result = service.processFailure(event, false);
 
         assertThat(result.getActionTaken()).isEqualTo("WHATSAPP_LINK");
         assertThat(result.getInterventionCost()).isEqualByComparingTo(BigDecimal.valueOf(0.35));
@@ -151,10 +138,10 @@ class RecoveryOrchestrationServiceTest {
                 "pay_mockfallback123", BigDecimal.valueOf(5000), "INSUFFICIENT_FUNDS",
                 "Priya Sharma", "+919876543210", 0);
 
-        RecoveryAudit result = service.processFailure(event);
+        RecoveryAudit result = service.processFailure(event, true);   // ← must be true, not false
 
         assertThat(result.getStatus()).isEqualTo("RECOVERED");
-        assertThat(result.getPaymentLinkUrl()).isEqualTo("https://rzp.io/i/recover-lback123");
+        assertThat(result.getPaymentLinkUrl()).isEqualTo("https://rzp.io/i/demo-recover-lback123");
         assertThat(result.getRecoveredAmount()).isEqualByComparingTo(BigDecimal.valueOf(5000));
     }
 
@@ -167,7 +154,7 @@ class RecoveryOrchestrationServiceTest {
                 "pay_livelink01", BigDecimal.valueOf(3000), "INSUFFICIENT_FUNDS",
                 "Rohan Iyer", "+919812345678", 0);
 
-        RecoveryAudit result = service.processFailure(event);
+        RecoveryAudit result = service.processFailure(event, true);
 
         assertThat(result.getStatus()).isEqualTo("RECOVERED");
         assertThat(result.getPaymentLinkUrl()).isEqualTo("https://rzp.io/i/LIVE123");
@@ -184,7 +171,7 @@ class RecoveryOrchestrationServiceTest {
                         "C", "+913333333333", 4)
         );
 
-        List<RecoveryAudit> results = service.processBatch(events);
+        List<RecoveryAudit> results = service.processBatch(events, false);
 
         assertThat(results).hasSize(3);
         ArgumentCaptor<RecoveryAudit> captor = ArgumentCaptor.forClass(RecoveryAudit.class);
@@ -195,7 +182,7 @@ class RecoveryOrchestrationServiceTest {
 
     @Test
     void processBatch_emptyList_returnsEmptyResultWithoutTouchingRepository() {
-        List<RecoveryAudit> results = service.processBatch(List.<PaymentFailureEventDto>of());
+        List<RecoveryAudit> results = service.processBatch(List.<PaymentFailureEventDto>of(), false);
 
         assertThat(results).isEmpty();
         org.mockito.Mockito.verifyNoInteractions(auditRepository);
@@ -203,7 +190,7 @@ class RecoveryOrchestrationServiceTest {
 
     @Test
     void processBatch_intCount_generatesAndProcessesSyntheticEvents() {
-        List<RecoveryAudit> results = service.processBatch(25);
+        List<RecoveryAudit> results = service.processBatch(25, false);
 
         assertThat(results).hasSize(25);
         org.mockito.Mockito.verify(auditRepository, org.mockito.Mockito.times(25))

@@ -15,6 +15,8 @@ import java.time.LocalDateTime;
 @Table(name = "recovery_audit")
 public class RecoveryAudit {
 
+    public static final String STATUS_CONFIRMED_RECOVERED = "CONFIRMED_RECOVERED";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -56,13 +58,17 @@ public class RecoveryAudit {
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
+    @Column(name = "is_real_payment_link")
+    private Boolean isRealPaymentLink;
+
     public RecoveryAudit() {
     }
 
     public RecoveryAudit(String transactionId, String customerName, String customerPhone,
                          BigDecimal amount, String errorCode, String actionTaken,
                          String decisionTrace, BigDecimal interventionCost,
-                         BigDecimal recoveredAmount, String status, String paymentLinkUrl) {
+                         BigDecimal recoveredAmount, String status, String paymentLinkUrl,
+                         Boolean isRealPaymentLink) {
         this.transactionId = transactionId;
         this.customerName = customerName;
         this.customerPhone = customerPhone;
@@ -74,6 +80,7 @@ public class RecoveryAudit {
         this.recoveredAmount = recoveredAmount;
         this.status = status;
         this.paymentLinkUrl = paymentLinkUrl;
+        this.isRealPaymentLink = isRealPaymentLink;
     }
 
     @PrePersist
@@ -97,7 +104,7 @@ public class RecoveryAudit {
         private BigDecimal recoveredAmount;
         private String status;
         private String paymentLinkUrl;
-
+        private Boolean isRealPaymentLink;
         public Builder transactionId(String transactionId) {
             this.transactionId = transactionId;
             return this;
@@ -152,10 +159,15 @@ public class RecoveryAudit {
             this.paymentLinkUrl = paymentLinkUrl;
             return this;
         }
+        public Builder isRealPaymentLink(Boolean isRealPaymentLink) {
+            this.isRealPaymentLink = isRealPaymentLink;
+            return this;
+        }
 
         public RecoveryAudit build() {
             return new RecoveryAudit(transactionId, customerName, customerPhone, amount, errorCode,
-                    actionTaken, decisionTrace, interventionCost, recoveredAmount, status, paymentLinkUrl);
+                    actionTaken, decisionTrace, interventionCost, recoveredAmount, status, paymentLinkUrl,
+                    isRealPaymentLink);
         }
     }
 
@@ -263,5 +275,13 @@ public class RecoveryAudit {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public Boolean getIsRealPaymentLink() {
+        return isRealPaymentLink;
+    }
+
+    public void setIsRealPaymentLink(Boolean isRealPaymentLink) {
+        this.isRealPaymentLink = isRealPaymentLink;
     }
 }

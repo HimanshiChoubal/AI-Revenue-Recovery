@@ -3,6 +3,7 @@ package com.razorpay.backend.controller;
 import com.razorpay.Utils;
 import com.razorpay.backend.dto.PaymentFailureEventDto;
 import com.razorpay.backend.entity.RecoveryAudit;
+import com.razorpay.backend.repository.RecoveryAuditRepository;
 import com.razorpay.backend.service.RecoveryOrchestrationService;
 import org.json.JSONObject;
 import org.slf4j.Logger;
@@ -17,16 +18,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
 import java.util.Map;
 
-/**
- * Receives real (or hackathon-simulated) Razorpay webhook payloads.
- * Verifies the X-Razorpay-Signature HMAC — using the same
- * razorpay.key.secret / razorpay.webhook.secret configuration that backs
- * the RazorpayClient bean in RazorpayConfig — before processing anything.
- * Only {@code payment.failed} events are dispatched into the recovery
- * pipeline; everything else is acknowledged and ignored.
- */
 @RestController
 @RequestMapping("/api/v1/razorpay")
 public class RazorpayWebhookController {
@@ -34,15 +28,20 @@ public class RazorpayWebhookController {
     private static final Logger log = LoggerFactory.getLogger(RazorpayWebhookController.class);
     private static final BigDecimal PAISE_PER_RUPEE = BigDecimal.valueOf(100);
     private static final String PAYMENT_FAILED_EVENT = "payment.failed";
+    private static final String PAYMENT_LINK_PAID_EVENT = "payment_link.paid";
+    private static final String STATUS_CONFIRMED_RECOVERED = "CONFIRMED_RECOVERED";
     private static final String SIGNATURE_HEADER = "X-Razorpay-Signature";
 
     private final RecoveryOrchestrationService orchestrationService;
+    private final RecoveryAuditRepository auditRepository;
     private final String webhookSecret;
 
     public RazorpayWebhookController(
             RecoveryOrchestrationService orchestrationService,
+            RecoveryAuditRepository auditRepository,
             @Value("${razorpay.webhook.secret:}") String webhookSecret) {
         this.orchestrationService = orchestrationService;
+        this.auditRepository = auditRepository;
         this.webhookSecret = webhookSecret;
     }
 
@@ -72,6 +71,9 @@ public class RazorpayWebhookController {
             return ResponseEntity.ok(Map.of("status", "ignored", "reason", "missing event field"));
         }
 
+        if (PAYMENT_LINK_PAID_EVENT.equals(eventType)) {
+            return handlePaymentLinkPaid(payload);
+        }
         if (!PAYMENT_FAILED_EVENT.equals(eventType)) {
             log.debug("Ignoring Razorpay webhook event of type '{}'", eventType);
             return ResponseEntity.ok(Map.of("status", "ignored", "event", eventType));
@@ -126,7 +128,7 @@ public class RazorpayWebhookController {
             log.info("Received verified payment.failed webhook: payment_id={} amount=₹{} error_code={}",
                     paymentId, amountInRupees, errorCode);
 
-            RecoveryAudit audit = orchestrationService.processFailure(event);
+            RecoveryAudit audit = orchestrationService.processFailure(event,true);
 
             return ResponseEntity.ok(Map.of(
                     "status", "processed",
@@ -141,13 +143,48 @@ public class RazorpayWebhookController {
         }
     }
 
-    /**
-     * Verifies the HMAC-SHA256 webhook signature using Razorpay's own
-     * Utils helper (the same SDK that RazorpayConfig wires up as the
-     * RazorpayClient bean). If no webhook secret is configured
-     * (local/dev demo), verification is skipped with a loud warning
-     * rather than silently accepting everything in production.
-     */
+    private ResponseEntity<Map<String, Object>> handlePaymentLinkPaid(JSONObject payload) {
+        JSONObject entity = payload
+                .optJSONObject("payload", new JSONObject())
+                .optJSONObject("payment_link", new JSONObject())
+                .optJSONObject("entity");
+
+        if (entity == null) {
+            log.warn("payment_link.paid webhook missing payload.payment_link.entity");
+            return ResponseEntity.badRequest()
+                    .body(Map.of("status", "error", "message", "Missing payload.payment_link.entity"));
+        }
+
+        String paymentLinkId = entity.has("id") && !entity.isNull("id") ? entity.optString("id") : null;
+        String shortUrl = entity.has("short_url") && !entity.isNull("short_url") ? entity.optString("short_url") : null;
+
+        if (shortUrl == null || shortUrl.isBlank()) {
+            log.warn("payment_link.paid webhook missing short_url for payment_link_id={}", paymentLinkId);
+            return ResponseEntity.badRequest()
+                    .body(Map.of("status", "error", "message", "Missing short_url"));
+        }
+
+        List<RecoveryAudit> matches = auditRepository.findByPaymentLinkUrl(shortUrl);
+        if (matches.isEmpty()) {
+            log.warn("No RecoveryAudit row found for paymentLinkUrl={} (payment_link_id={})", shortUrl, paymentLinkId);
+            return ResponseEntity.ok(Map.of("status", "ignored", "reason", "no matching audit row"));
+        }
+
+        RecoveryAudit audit = matches.get(0);
+        audit.setStatus("CONFIRMED_RECOVERED");
+        audit.setRecoveredAmount(audit.getAmount());   // ← this line is the actual fix
+        auditRepository.save(audit);
+
+        log.info("Confirmed recovery via payment_link.paid: txn={} payment_link_id={}",
+                audit.getTransactionId(), paymentLinkId);
+
+        return ResponseEntity.ok(Map.of(
+                "status", "processed",
+                "transaction_id", audit.getTransactionId(),
+                "recovery_status", audit.getStatus()
+        ));
+    }
+
     private boolean isSignatureValid(String rawPayload, String signature) {
         if (webhookSecret == null || webhookSecret.isBlank()
                 || webhookSecret.equals("YOUR_RAZORPAY_WEBHOOK_SECRET")) {
