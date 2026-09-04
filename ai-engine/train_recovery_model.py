@@ -21,10 +21,7 @@ ERROR_CODES = [
     "STOLEN_CARD",
 ]
 INTERVENTION_COST = 0.35
-# Per-error-code contribution to the recovery-success logit. Soft
-# technical failures recover easily (gateway retry usually just works);
-# user friction is a coin flip depending on outreach; terminal
-# instrument failures almost never recover.
+
 ERROR_CODE_LOGIT = {
     "GATEWAY_TIMEOUT": 1.0,
     "BAD_REQUEST_PAYMENT_TIMED_OUT": 0.8,

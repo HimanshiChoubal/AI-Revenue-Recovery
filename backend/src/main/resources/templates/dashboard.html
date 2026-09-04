@@ -121,8 +121,10 @@
         </div>
 
         <div class="mt-3 overflow-hidden rounded-xl border border-edge bg-surface">
-            <div class="overflow-x-auto">
-                <table class="w-full border-collapse text-left">
+            <!-- Added pb-2 for scrollbar spacing -->
+            <div class="overflow-x-auto pb-2">
+                <!-- Added min-w-[1350px] to force the horizontal slide effect -->
+                <table class="w-full min-w-[1800px] border-collapse text-left">
                     <thead>
                     <tr class="border-b border-edge bg-surface2 text-[11px] uppercase tracking-wide text-slate-500">
                         <th class="px-4 py-3 font-medium">Txn ID</th>
@@ -133,7 +135,8 @@
                         <th class="px-4 py-3 font-medium">Cost</th>
                         <th class="px-4 py-3 font-medium">Recovered</th>
                         <th class="px-4 py-3 font-medium">Payment Link</th>
-                        <th class="px-4 py-3 font-medium">Status</th>
+                        <!-- Adding a specific width to Status ensures it stays tucked away -->
+                        <th class="px-4 py-3 font-medium min-w-[180px]">Status</th>
                     </tr>
                     </thead>
                     <tbody id="audit-tbody"
