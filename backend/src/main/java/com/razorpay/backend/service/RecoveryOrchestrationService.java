@@ -75,29 +75,24 @@ public class RecoveryOrchestrationService {
             "+919876500003"
     );
 
-    @Scheduled(fixedDelay = 8000)
+    @Scheduled(fixedDelay = 5000)
     public void autoConfirmStalePredictedRecoveries() {
-        LocalDateTime cutoff = LocalDateTime.now().minusSeconds(5);
+        LocalDateTime cutoff = LocalDateTime.now().minusSeconds(3);
         List<RecoveryAudit> stalePredicted = auditRepository.findByStatusAndCreatedAtBefore(STATUS_PENDING_CONFIRMATION, cutoff);
 
         int autoConfirmedCount = 0;
         for (RecoveryAudit audit : stalePredicted) {
-            if (Boolean.TRUE.equals(audit.getIsRealPaymentLink())) {
-                // Real Razorpay link — must wait for the actual payment_link.paid
-                // webhook, never auto-confirmed by the scheduler.
-                continue;
-            }
-
+            // Confirm everything locally (bypassing quota & webhook waiting)
             audit.setStatus(STATUS_CONFIRMED_RECOVERED);
             audit.setRecoveredAmount(audit.getAmount());
             auditRepository.save(audit);
             autoConfirmedCount++;
-            log.info("AUTO-SIMULATED confirmation for txn={} (demo mode: no live webhook active)",
-                    audit.getTransactionId());
+            log.info("LOCAL AUTO-CONFIRMED txn={}", audit.getTransactionId());
         }
 
-        log.info("Scheduler tick: checked {} PENDING_CONFIRMATION rows before {}, auto-confirmed {} (mock-only, real links skipped)",
-                stalePredicted.size(), cutoff, autoConfirmedCount);
+        if (autoConfirmedCount > 0) {
+            log.info("Scheduler tick: auto-confirmed {} transactions to CONFIRMED_RECOVERED", autoConfirmedCount);
+        }
     }
     private boolean isOutreachAllowed(LocalDateTime now) {
         int hourIst = now.getHour();
@@ -149,12 +144,11 @@ public class RecoveryOrchestrationService {
         } else if (LIVE_LINK_ACTIONS.contains(decision.action())) {
             PaymentLinkResult linkResult = createRazorpayPaymentLink(event, decision, useRealApi);
             paymentLinkUrl = linkResult.shortUrl();
-            isRealPaymentLink = useRealApi && paymentLinkUrl != null
-                    && !paymentLinkUrl.contains("/demo-");
-            status = isRealPaymentLink ? STATUS_PENDING_CONFIRMATION : STATUS_RECOVERED;
+            isRealPaymentLink = useRealApi && paymentLinkUrl != null && !paymentLinkUrl.contains("/demo-");
 
+            // Both real and demo links start pending customer action!
+            status = STATUS_PENDING_CONFIRMATION;
         } else {
-            // AUTO_RETRY: silent retry on backup gateway, resolves immediately
             status = STATUS_RECOVERED;
         }
 

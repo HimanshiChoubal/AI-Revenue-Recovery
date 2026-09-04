@@ -50,4 +50,5 @@ public class DashboardViewController {
         log.debug("Rendering transaction detail for id={}", id);
         return "transaction_detail";
     }
+
 }
