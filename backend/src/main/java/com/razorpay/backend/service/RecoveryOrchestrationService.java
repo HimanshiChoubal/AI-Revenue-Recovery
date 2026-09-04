@@ -14,7 +14,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
-
+import com.razorpay.backend.gateway.PaymentLinkResult;
+import java.time.ZoneId;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
@@ -27,7 +28,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadLocalRandom;
-
+import org.springframework.scheduling.annotation.Scheduled;
 @Service
 public class RecoveryOrchestrationService {
 
@@ -60,12 +61,48 @@ public class RecoveryOrchestrationService {
     private static final long RAZORPAY_RATE_LIMIT_RETRY_DELAY_MS = 2000;
     private static final String RATE_LIMIT_ERROR_SUBSTRING = "Too many requests";
 
+
     private final Semaphore razorpayCallSemaphore = new Semaphore(RAZORPAY_MAX_CONCURRENT_CALLS);
 
     private final RecoveryAuditRepository auditRepository;
     private final PaymentLinkGateway paymentLinkGateway;
     private final RestClient aiEngineClient;
     private final String aiEngineUrl;
+
+    private static final Set<String> OPTED_OUT_NUMBERS = Set.of(
+            "+919876500001",
+            "+919876500002",
+            "+919876500003"
+    );
+
+    @Scheduled(fixedDelay = 8000)
+    public void autoConfirmStalePredictedRecoveries() {
+        LocalDateTime cutoff = LocalDateTime.now().minusSeconds(5);
+        List<RecoveryAudit> stalePredicted = auditRepository.findByStatusAndCreatedAtBefore(STATUS_PENDING_CONFIRMATION, cutoff);
+
+        int autoConfirmedCount = 0;
+        for (RecoveryAudit audit : stalePredicted) {
+            if (Boolean.TRUE.equals(audit.getIsRealPaymentLink())) {
+                // Real Razorpay link — must wait for the actual payment_link.paid
+                // webhook, never auto-confirmed by the scheduler.
+                continue;
+            }
+
+            audit.setStatus(STATUS_CONFIRMED_RECOVERED);
+            audit.setRecoveredAmount(audit.getAmount());
+            auditRepository.save(audit);
+            autoConfirmedCount++;
+            log.info("AUTO-SIMULATED confirmation for txn={} (demo mode: no live webhook active)",
+                    audit.getTransactionId());
+        }
+
+        log.info("Scheduler tick: checked {} PENDING_CONFIRMATION rows before {}, auto-confirmed {} (mock-only, real links skipped)",
+                stalePredicted.size(), cutoff, autoConfirmedCount);
+    }
+    private boolean isOutreachAllowed(LocalDateTime now) {
+        int hourIst = now.getHour();
+        return hourIst >= 9 && hourIst <= 21;
+    }
 
     public RecoveryOrchestrationService(
             RecoveryAuditRepository auditRepository,
@@ -110,18 +147,12 @@ public class RecoveryOrchestrationService {
         if (ACTION_ABORT.equals(decision.action())) {
             status = STATUS_ABORTED;
         } else if (LIVE_LINK_ACTIONS.contains(decision.action())) {
-            paymentLinkUrl = createRazorpayPaymentLink(event, decision, useRealApi);
-            isRealPaymentLink = useRealApi && paymentLinkUrl != null && !paymentLinkUrl.contains("/demo-");
+            PaymentLinkResult linkResult = createRazorpayPaymentLink(event, decision, useRealApi);
+            paymentLinkUrl = linkResult.shortUrl();
+            isRealPaymentLink = useRealApi && paymentLinkUrl != null
+                    && !paymentLinkUrl.contains("/demo-");
+            status = isRealPaymentLink ? STATUS_PENDING_CONFIRMATION : STATUS_RECOVERED;
 
-            if (isRealPaymentLink) {
-                // Real link dispatched to a real payment page — status stays
-                // unresolved until payment_link.paid webhook confirms it.
-                status = STATUS_PENDING_CONFIRMATION;
-            } else {
-                // Synthetic/mock link: no real customer to confirm anything,
-                // so the benchmark still resolves instantly for offline metrics.
-                status = STATUS_RECOVERED;
-            }
         } else {
             // AUTO_RETRY: silent retry on backup gateway, resolves immediately
             status = STATUS_RECOVERED;
@@ -274,6 +305,22 @@ public class RecoveryOrchestrationService {
                     COST_AUTO_RETRY, null, "BACKUP_GATEWAY");
         }
 
+        // --- Compliance gate: applies to any action that would actually
+        // contact the customer (VOICE_OUTREACH / WHATSAPP_LINK below) ---
+        if (OPTED_OUT_NUMBERS.contains(event.customerPhone())) {
+            return new RecoveryDecisionDto(
+                    ACTION_ABORT,
+                    "Blocked: customer opted out",
+                    BigDecimal.ZERO, null, "NONE");
+        }
+
+        if (!isOutreachAllowed(LocalDateTime.now(ZoneId.of("Asia/Kolkata")))) {
+            return new RecoveryDecisionDto(
+                    ACTION_ABORT,
+                    "Blocked by compliance gate: outside 9AM-9PM IST outreach window (TRAI)",
+                    BigDecimal.ZERO, null, "NONE");
+        }
+
         if (amount.compareTo(HIGH_VALUE_THRESHOLD) >= 0) {
             return new RecoveryDecisionDto(
                     ACTION_VOICE_OUTREACH,
@@ -293,16 +340,16 @@ public class RecoveryOrchestrationService {
                 "WHATSAPP::" + event.customerPhone());
     }
 
-    private String createRazorpayPaymentLink(PaymentFailureEventDto event, RecoveryDecisionDto decision,
-                                             boolean useRealApi) {
+    private PaymentLinkResult createRazorpayPaymentLink(PaymentFailureEventDto event, RecoveryDecisionDto decision,
+                                                        boolean useRealApi) {
         if (!useRealApi) {
-            return mockPaymentLink(event.transactionId());
+            return new PaymentLinkResult(null, mockPaymentLink(event.transactionId()));
         }
 
         if (event.amount() == null || event.amount().compareTo(BigDecimal.ZERO) <= 0) {
             log.warn("Invalid amount for txn={}; using mock payment link instead of skipping.",
                     event.transactionId());
-            return mockPaymentLink(event.transactionId());
+            return new PaymentLinkResult(null, mockPaymentLink(event.transactionId()));
         }
 
         try {
@@ -311,11 +358,11 @@ public class RecoveryOrchestrationService {
             Thread.currentThread().interrupt();
             log.warn("Interrupted while waiting for Razorpay call slot for txn={} — using mock link.",
                     event.transactionId());
-            return mockPaymentLink(event.transactionId());
+            return new PaymentLinkResult(null, mockPaymentLink(event.transactionId()));
         }
 
         try {
-            return attemptRazorpayLinkCreation(event, decision, false);
+            return attemptRazorpayLinkCreation(event, decision, /* isRetry= */ false);
         } finally {
             try {
                 Thread.sleep(RAZORPAY_CALL_DELAY_MS);
@@ -325,9 +372,8 @@ public class RecoveryOrchestrationService {
             razorpayCallSemaphore.release();
         }
     }
-
-    private String attemptRazorpayLinkCreation(PaymentFailureEventDto event, RecoveryDecisionDto decision,
-                                               boolean isRetry) {
+    private PaymentLinkResult attemptRazorpayLinkCreation(PaymentFailureEventDto event, RecoveryDecisionDto decision,
+                                                          boolean isRetry) {
         try {
             long amountInPaise = event.amount()
                     .multiply(BigDecimal.valueOf(100))
@@ -358,11 +404,11 @@ public class RecoveryOrchestrationService {
             payload.put("reference_id", event.transactionId());
             payload.put("reminder_enable", false);
 
-            String shortUrl = paymentLinkGateway.createPaymentLink(payload);
+            PaymentLinkResult result = paymentLinkGateway.createPaymentLink(payload);
 
-            log.info("Created live Razorpay payment link for txn={} action={} -> {}",
-                    event.transactionId(), decision.action(), shortUrl);
-            return shortUrl;
+            log.info("Created live Razorpay payment link for txn={} action={} id={} -> {}",
+                    event.transactionId(), decision.action(), result.id(), result.shortUrl());
+            return result;
         } catch (RazorpayException e) {
             boolean isRateLimited = e.getMessage() != null && e.getMessage().contains(RATE_LIMIT_ERROR_SUBSTRING);
 
@@ -373,18 +419,18 @@ public class RecoveryOrchestrationService {
                     Thread.sleep(RAZORPAY_RATE_LIMIT_RETRY_DELAY_MS);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
-                    return mockPaymentLink(event.transactionId());
+                    return new PaymentLinkResult(null, mockPaymentLink(event.transactionId()));
                 }
-                return attemptRazorpayLinkCreation(event, decision, true);
+                return attemptRazorpayLinkCreation(event, decision, /* isRetry= */ true);
             }
 
             log.error("Razorpay link creation FAILED for txn={} — full error before mock fallback: {}",
                     event.transactionId(), e.getMessage(), e);
-            return mockPaymentLink(event.transactionId());
+            return new PaymentLinkResult(null, mockPaymentLink(event.transactionId()));
         } catch (ArithmeticException e) {
             log.warn("Amount-to-paise conversion failed for txn={} — using mock link instead. Reason: {}",
                     event.transactionId(), e.getMessage());
-            return mockPaymentLink(event.transactionId());
+            return new PaymentLinkResult(null, mockPaymentLink(event.transactionId()));
         }
     }
 
@@ -486,4 +532,5 @@ public class RecoveryOrchestrationService {
         }
         return value.length() <= maxLength ? value : value.substring(0, maxLength);
     }
+
 }

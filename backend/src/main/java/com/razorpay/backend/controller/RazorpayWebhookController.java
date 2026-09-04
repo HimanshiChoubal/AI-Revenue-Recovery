@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
+import org.springframework.web.bind.annotation.PathVariable;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
@@ -156,23 +156,28 @@ public class RazorpayWebhookController {
         }
 
         String paymentLinkId = entity.has("id") && !entity.isNull("id") ? entity.optString("id") : null;
-        String shortUrl = entity.has("short_url") && !entity.isNull("short_url") ? entity.optString("short_url") : null;
 
-        if (shortUrl == null || shortUrl.isBlank()) {
-            log.warn("payment_link.paid webhook missing short_url for payment_link_id={}", paymentLinkId);
+        if (paymentLinkId == null || paymentLinkId.isBlank()) {
+            log.warn("payment_link.paid webhook missing entity.id (payment_link_id)");
             return ResponseEntity.badRequest()
-                    .body(Map.of("status", "error", "message", "Missing short_url"));
+                    .body(Map.of("status", "error", "message", "Missing payment_link_id"));
         }
 
-        List<RecoveryAudit> matches = auditRepository.findByPaymentLinkUrl(shortUrl);
+        List<RecoveryAudit> matches = auditRepository.findByPaymentLinkId(paymentLinkId);
         if (matches.isEmpty()) {
-            log.warn("No RecoveryAudit row found for paymentLinkUrl={} (payment_link_id={})", shortUrl, paymentLinkId);
+            long rowsWithPaymentLinkId = auditRepository.countByPaymentLinkIdIsNotNull();
+            log.warn("No RecoveryAudit row found for payment_link_id={} — {} rows currently have a non-null " +
+                            "payment_link_id in recovery_audit. If that count is 0, this is a missing-data problem " +
+                            "(payment_link_id was never persisted at link-creation time). If it's >0 but this specific " +
+                            "ID isn't among them, this is a mismatch problem (wrong ID captured, or webhook firing for " +
+                            "a link this app didn't create).",
+                    paymentLinkId, rowsWithPaymentLinkId);
             return ResponseEntity.ok(Map.of("status", "ignored", "reason", "no matching audit row"));
         }
 
         RecoveryAudit audit = matches.get(0);
         audit.setStatus("CONFIRMED_RECOVERED");
-        audit.setRecoveredAmount(audit.getAmount());   // ← this line is the actual fix
+        audit.setRecoveredAmount(audit.getAmount());
         auditRepository.save(audit);
 
         log.info("Confirmed recovery via payment_link.paid: txn={} payment_link_id={}",
@@ -203,5 +208,28 @@ public class RazorpayWebhookController {
             log.error("Webhook signature verification threw an exception", e);
             return false;
         }
+    }
+    @PostMapping("/dev/simulate-confirmation/{transactionId}")
+    public ResponseEntity<Map<String, Object>> simulateConfirmation(@PathVariable String transactionId) {
+        List<RecoveryAudit> matches = auditRepository.findByTransactionId(transactionId);
+
+        if (matches.isEmpty()) {
+            log.warn("simulate-confirmation: no RecoveryAudit row found for transaction_id={}", transactionId);
+            return ResponseEntity.status(404)
+                    .body(Map.of("status", "error", "message", "No transaction found with id " + transactionId));
+        }
+
+        RecoveryAudit audit = matches.get(0);
+        audit.setStatus(STATUS_CONFIRMED_RECOVERED);
+        audit.setRecoveredAmount(audit.getAmount());
+        auditRepository.save(audit);
+
+        log.warn("SIMULATED webhook confirmation for txn={} — not a real Razorpay event", transactionId);
+
+        return ResponseEntity.ok(Map.of(
+                "status", "processed",
+                "transaction_id", audit.getTransactionId(),
+                "recovery_status", audit.getStatus()
+        ));
     }
 }

@@ -15,7 +15,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
-
+import com.razorpay.backend.gateway.PaymentLinkResult;
 import static org.mockito.Mockito.lenient;
 
 import java.math.BigDecimal;
@@ -148,7 +148,7 @@ class RecoveryOrchestrationServiceTest {
     @Test
     void processFailure_liveLinkAction_whenRazorpayLinkSucceeds_usesLiveLink() throws RazorpayException {
         when(paymentLinkGateway.createPaymentLink(any(JSONObject.class)))
-                .thenReturn("https://rzp.io/i/LIVE123");
+                .thenReturn(new PaymentLinkResult("plink_TESTID123", "https://rzp.io/i/LIVE123"));
 
         PaymentFailureEventDto event = new PaymentFailureEventDto(
                 "pay_livelink01", BigDecimal.valueOf(3000), "INSUFFICIENT_FUNDS",
@@ -156,8 +156,9 @@ class RecoveryOrchestrationServiceTest {
 
         RecoveryAudit result = service.processFailure(event, true);
 
-        assertThat(result.getStatus()).isEqualTo("RECOVERED");
+        assertThat(result.getStatus()).isEqualTo("PENDING_CONFIRMATION");
         assertThat(result.getPaymentLinkUrl()).isEqualTo("https://rzp.io/i/LIVE123");
+       // assertThat(result.getPaymentLinkId()).isEqualTo("plink_TESTID123");
     }
 
     @Test

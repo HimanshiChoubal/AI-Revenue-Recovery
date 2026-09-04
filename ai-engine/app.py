@@ -83,7 +83,8 @@ COST_AUTO_RETRY = 0.05
 COST_WHATSAPP_LINK = 0.35
 COST_VOICE_OUTREACH = 1.20
 COST_ABORT = 0.0
-
+CHECKOUT_ABANDONMENT_CODES = {"CART_ABANDONED_TIMEOUT", "CHECKOUT_SESSION_EXPIRED"}
+ 
 
 def diagnose(error_code: str) -> str:
     if error_code in SOFT_TECHNICAL_ERRORS:
@@ -92,6 +93,8 @@ def diagnose(error_code: str) -> str:
         return "User-side friction — customer action likely needed to complete payment."
     if error_code in ABORT_ERROR_CODES:
         return "Terminal instrument failure — this payment method cannot be retried."
+    if error_code in CHECKOUT_ABANDONMENT_CODES:
+        return "Checkout was started but never completed — likely distraction or price hesitation, not a technical failure."
     return "Unrecognized error code — treated as user-side friction by default."
 
 
@@ -122,7 +125,21 @@ def plan_action(event: PaymentFailureEvent) -> RecoveryPlan:
             estimated_cost=COST_AUTO_RETRY,
             confidence_score=0.90,
         )
+    if error_code in CHECKOUT_ABANDONMENT_CODES and event.amount >= HIGH_VALUE_THRESHOLD:
+      return RecoveryPlan(
+        diagnosis=diagnosis,
+        recommended_action="VOICE_OUTREACH",
+        estimated_cost=COST_VOICE_OUTREACH,
+        confidence_score=0.75,
+    )
 
+    if error_code in CHECKOUT_ABANDONMENT_CODES:
+     return RecoveryPlan(
+        diagnosis=diagnosis,
+        recommended_action="WHATSAPP_LINK",
+        estimated_cost=COST_WHATSAPP_LINK,
+        confidence_score=0.70,
+    )
     if error_code in USER_FRICTION_ERRORS and event.amount >= HIGH_VALUE_THRESHOLD:
         return RecoveryPlan(
             diagnosis=diagnosis,

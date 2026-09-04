@@ -61,6 +61,9 @@ public class RecoveryAudit {
     @Column(name = "is_real_payment_link")
     private Boolean isRealPaymentLink;
 
+    @Column(name = "payment_link_id")
+    private String paymentLinkId;
+
     public RecoveryAudit() {
     }
 
@@ -68,7 +71,7 @@ public class RecoveryAudit {
                          BigDecimal amount, String errorCode, String actionTaken,
                          String decisionTrace, BigDecimal interventionCost,
                          BigDecimal recoveredAmount, String status, String paymentLinkUrl,
-                         Boolean isRealPaymentLink) {
+                         String paymentLinkId, Boolean isRealPaymentLink) {
         this.transactionId = transactionId;
         this.customerName = customerName;
         this.customerPhone = customerPhone;
@@ -80,6 +83,7 @@ public class RecoveryAudit {
         this.recoveredAmount = recoveredAmount;
         this.status = status;
         this.paymentLinkUrl = paymentLinkUrl;
+        this.paymentLinkId = paymentLinkId;
         this.isRealPaymentLink = isRealPaymentLink;
     }
 
@@ -104,7 +108,9 @@ public class RecoveryAudit {
         private BigDecimal recoveredAmount;
         private String status;
         private String paymentLinkUrl;
+        private String paymentLinkId;
         private Boolean isRealPaymentLink;
+
         public Builder transactionId(String transactionId) {
             this.transactionId = transactionId;
             return this;
@@ -159,6 +165,12 @@ public class RecoveryAudit {
             this.paymentLinkUrl = paymentLinkUrl;
             return this;
         }
+
+        public Builder paymentLinkId(String paymentLinkId) {
+            this.paymentLinkId = paymentLinkId;
+            return this;
+        }
+
         public Builder isRealPaymentLink(Boolean isRealPaymentLink) {
             this.isRealPaymentLink = isRealPaymentLink;
             return this;
@@ -167,7 +179,7 @@ public class RecoveryAudit {
         public RecoveryAudit build() {
             return new RecoveryAudit(transactionId, customerName, customerPhone, amount, errorCode,
                     actionTaken, decisionTrace, interventionCost, recoveredAmount, status, paymentLinkUrl,
-                    isRealPaymentLink);
+                    paymentLinkId, isRealPaymentLink);
         }
     }
 
@@ -283,5 +295,13 @@ public class RecoveryAudit {
 
     public void setIsRealPaymentLink(Boolean isRealPaymentLink) {
         this.isRealPaymentLink = isRealPaymentLink;
+    }
+
+    public String getPaymentLinkId() {
+        return paymentLinkId;
+    }
+
+    public void setPaymentLinkId(String paymentLinkId) {
+        this.paymentLinkId = paymentLinkId;
     }
 }

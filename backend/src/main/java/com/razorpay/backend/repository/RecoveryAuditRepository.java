@@ -5,12 +5,13 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import com.razorpay.backend.dto.ActionBreakdown;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 public interface RecoveryAuditRepository extends JpaRepository<RecoveryAudit, Long> {
 
     List<RecoveryAudit> findTop50ByOrderByCreatedAtDesc();
-
+    List<RecoveryAudit> findByStatusAndCreatedAtBefore(String status, LocalDateTime cutoff);
     /**
      * Sum of transaction amounts still pending recovery (status = 'PENDING').
      */
@@ -21,6 +22,11 @@ public interface RecoveryAuditRepository extends JpaRepository<RecoveryAudit, Lo
      */
     @Query("SELECT COALESCE(SUM(r.recoveredAmount), 0) FROM RecoveryAudit r WHERE r.status IN ('RECOVERED', 'CONFIRMED_RECOVERED')")
     BigDecimal getTotalRecovered();
+
+
+    List<RecoveryAudit> findByPaymentLinkId(String paymentLinkId);
+
+    long countByPaymentLinkIdIsNotNull();
 
     /**
      * Sum of intervention cost incurred across all recovery attempts.

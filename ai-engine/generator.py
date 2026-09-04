@@ -51,7 +51,7 @@ MANDATE_CODES = ["MANDATE_EXPIRED"]
 HARD_BLOCK_CODES = ["CARD_BLOCKED", "STOLEN_CARD", "ACCOUNT_CLOSED"]
 
 PAYMENT_RAILS = ["UPI", "CARD", "NETBANKING", "WALLET", "EMI"]
-
+CHECKOUT_ABANDONMENT_CODES = ["CART_ABANDONED_TIMEOUT", "CHECKOUT_SESSION_EXPIRED"]
 
 def random_phone() -> str:
     return f"+91{random.choice('6789')}{random.randint(10**8, 10**9 - 1)}"
@@ -60,6 +60,8 @@ def random_phone() -> str:
 def random_amount(error_code: str) -> float:
     if error_code in MANDATE_CODES:
         return round(random.choice([99, 199, 299, 499, 999, 1499, 1999]) + random.uniform(0, 0.99), 2)
+    if error_code in CHECKOUT_ABANDONMENT_CODES:
+        return round(random.uniform(200, 8000), 2)
     if error_code in USER_FRICTION_CODES:
         return round(random.uniform(150, 25000), 2)
     if error_code in HARD_BLOCK_CODES:
@@ -68,9 +70,10 @@ def random_amount(error_code: str) -> float:
 
 
 def pick_error_code() -> str:
+    """Sample an error code according to the target failure distribution."""
     bucket = random.choices(
-        population=["soft_gateway", "user_friction", "mandate", "hard_block"],
-        weights=[40, 35, 15, 10],
+        population=["soft_gateway", "user_friction", "mandate", "hard_block", "checkout_abandonment"],
+        weights=[37, 32, 15, 10, 6],
         k=1,
     )[0]
     if bucket == "soft_gateway":
@@ -79,6 +82,8 @@ def pick_error_code() -> str:
         return random.choice(USER_FRICTION_CODES)
     if bucket == "mandate":
         return random.choice(MANDATE_CODES)
+    if bucket == "checkout_abandonment":
+        return random.choice(CHECKOUT_ABANDONMENT_CODES)
     return random.choice(HARD_BLOCK_CODES)
 
 

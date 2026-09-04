@@ -20,6 +20,7 @@ public class RazorpayKeyStartupCheck implements CommandLineRunner {
     private static final String PLACEHOLDER_KEY_ID = "YOUR_RAZORPAY_KEY_ID";
     private static final String TEST_KEY_PREFIX = "rzp_test_";
 
+
     @Value("${razorpay.key.id:}")
     private String keyId;
 
@@ -41,4 +42,5 @@ public class RazorpayKeyStartupCheck implements CommandLineRunner {
                     "Razorpay key before assuming live calls will succeed.", keyId, TEST_KEY_PREFIX);
         }
     }
+
 }
