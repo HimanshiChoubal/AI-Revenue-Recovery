@@ -119,7 +119,7 @@ H2 console: `http://localhost:8080/h2-console` — JDBC `jdbc:h2:mem:recoverdb;D
 
 ## What's next
 
-- Live webhook confirmation as the default path, with the demo-mode simulation retained as a fallback for quota-constrained testing.
+
 - The prototyped LLM-reasoning layer, integrated behind the existing deterministic gate.
 - Full DND-registry and DLT template integration ahead of any production customer contact.
 - Receivables chasing, using invoice due-dates as the trigger source into the same policy engine.
